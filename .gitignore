@@ -1,0 +1,8 @@
+.ruff_cache/
+kinoforge.egg-info/
+__pycache__/
+docs/
+.mypy_cache/
+./DESIGN.md
+DESIGN.md
+

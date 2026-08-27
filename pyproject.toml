@@ -1,0 +1,27 @@
+[project]
+name = "kinoforge"
+version = "0.1.0"
+description = "The open generation engine for clips, series, and story segments behind one job contract."
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.110", "httpx>=0.27", "numpy>=1.26", "uvicorn[standard]>=0.27"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["kinoforge*"]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6", "mypy>=1.11", "pytest>=8"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
