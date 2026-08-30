@@ -7,6 +7,10 @@ Current implementation:
 
 - Clips pipeline: transcription, moment discovery/scoring, rendering, formatting, and project
   record generation.
+- Story pipeline: screenwriter stages, story operations, prompt previews, and image, video, music,
+  and voice generation through Infrelay.
+- Series pipeline: recurring cast portraits and connected episode planning. Approved episodes run
+  through the Story pipeline.
 - REST service on port `8100`.
 - Inference through `INFRELAY_URL`.
 - Optional bearer authentication through `KINOFORGE_SERVICE_TOKEN`.
@@ -55,5 +59,6 @@ editor/publishing flows without Python imports.
 Segment discovery: `GET /v1/segments` returns stable names, labels, icons, descriptions,
 implementation status, API versions, and execution paths for clips, story, and series.
 
-Status: clips cloud boundary implemented. Series/story extraction, assets URL transport,
-self-host thin runtime, licensing, and public repository split remain.
+Status: clips, story, and series REST boundaries are available. Cloud Core owns durable workflows
+and Studio owns final assembly. The shared-volume media adapter is the current cloud transport;
+remote Assets transport and the self-host thin runtime remain separate follow-up work.
