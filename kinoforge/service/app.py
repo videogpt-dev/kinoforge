@@ -398,7 +398,6 @@ def format_media(code_name: JobKind, request: FormatRequest) -> dict:
     ok = apply_format_with_aspect_ratio(
         source,
         output,
-        None,
         request.aspect_ratio,
         info,
         moment={},

@@ -19,10 +19,52 @@ def _encode_args(use_gpu: bool) -> List[str]:
     return ["-c:v", "libx264", "-preset", "medium", "-crf", "23"]
 
 
-def _write_window_srt(transcript: List[Dict], start: float, end: float, srt_path: Path) -> bool:
-    """Write a clip-relative SRT for transcript segments overlapping [start, end].
-    Returns False (no file written) when the window has no caption text."""
-    blocks: List[str] = []
+def _ass_timestamp(seconds: float) -> str:
+    """ASS timestamp: H:MM:SS.cc (centiseconds)."""
+    seconds = max(0.0, seconds)
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    centis = int((seconds % 1) * 100)
+    return f"{hours:d}:{minutes:02d}:{secs:02d}.{centis:02d}"
+
+
+def _ass_escape(text: str) -> str:
+    """Escape caption text for an ASS Dialogue line."""
+    return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", "\\N")
+
+
+def _chunk_caption(text: str, max_chars: int = 42) -> List[str]:
+    """Break caption text into <= max_chars chunks on word boundaries (about two lines)."""
+    words = text.split()
+    chunks: List[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and len(candidate) > max_chars:
+            chunks.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks or [text]
+
+
+def _write_window_ass(
+    transcript: List[Dict], start: float, end: float, ass_path: Path, width: int, height: int
+) -> bool:
+    """Write a clip-relative ASS for transcript segments overlapping [start, end].
+
+    PlayResX/Y are pinned to the output dimensions so Fontsize is real pixels (an SRT
+    with force_style scales against libass' 288px default, blowing captions up ~6x).
+    Font size, margins and outline scale with height; captions sit bottom-centre.
+    Returns False when the window has no caption text."""
+    font_size = max(24, round(height * 0.040))
+    outline = max(2, round(height * 0.003))
+    margin_v = round(height * 0.10)
+    margin_h = round(width * 0.07)
+    events: List[str] = []
     for seg in transcript or []:
         s, e = float(seg.get("start", 0) or 0), float(seg.get("end", 0) or 0)
         if e <= start or s >= end:
@@ -32,13 +74,38 @@ def _write_window_srt(transcript: List[Dict], start: float, end: float, srt_path
             continue
         rel_start = max(0.0, s - start)
         rel_end = max(rel_start + 0.1, min(e, end) - start)
-        n = len(blocks) + 1
-        blocks.append(
-            f"{n}\n{format_srt_timestamp(rel_start)} --> {format_srt_timestamp(rel_end)}\n{text}\n"
-        )
-    if not blocks:
+        # Split a long segment into short chunks (~2 lines) so captions never blanket the
+        # frame; each chunk gets a time slice proportional to its length.
+        chunks = _chunk_caption(text)
+        total = sum(len(c) for c in chunks) or 1
+        cursor = rel_start
+        for chunk in chunks:
+            span = (rel_end - rel_start) * (len(chunk) / total)
+            c_end = min(rel_end, cursor + max(0.4, span))
+            events.append(
+                f"Dialogue: 0,{_ass_timestamp(cursor)},{_ass_timestamp(c_end)},"
+                f"Default,,0,0,0,,{_ass_escape(chunk)}"
+            )
+            cursor = c_end
+    if not events:
         return False
-    srt_path.write_text("\n".join(blocks), encoding="utf-8")
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {width}\n"
+        f"PlayResY: {height}\n"
+        "WrapStyle: 0\n"
+        "ScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Default,Arial,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,"
+        f"-1,0,0,0,100,100,0,0,1,{outline},1,2,{margin_h},{margin_h},{margin_v},1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    ass_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return True
 
 
@@ -65,7 +132,6 @@ def format_clips_multi_platform(
     burn = rendering["burn_subtitles"]
     mute = rendering["mute_output"]
     use_gpu = processing["use_gpu"]
-    font_size = rendering["subtitle_font_size"]
     max_workers = processing["max_workers"]
 
     formatted_clips: Dict[str, List] = {fmt: [] for fmt in formats}
@@ -74,19 +140,13 @@ def format_clips_multi_platform(
         print(f"\n  Processing clip {i}/{len(clip_paths)}...")
         video_info = get_video_metadata(clip_path)
 
-        srt_path = None
-        if burn and transcript:
-            candidate = output_dir / f"clip_{i:02d}.srt"
-            if _write_window_srt(transcript, moment["start"], moment["end"], candidate):
-                srt_path = candidate
-
         produced = []
         for aspect_ratio in formats:
             output_name = f"clip_{i:02d}_{aspect_ratio.replace(':', 'x')}.mp4"
             output_path = output_dir / output_name
             ok = apply_format_with_aspect_ratio(
-                clip_path, output_path, srt_path, aspect_ratio, video_info, moment,
-                font_size=font_size, mute=mute, use_gpu=use_gpu,
+                clip_path, output_path, aspect_ratio, video_info, moment,
+                transcript=transcript if burn else None, mute=mute, use_gpu=use_gpu,
             )
             print(f"    {'✓' if ok else '✗'} {aspect_ratio}: {output_name}")
             produced.append((aspect_ratio, output_path, ok))
@@ -178,19 +238,19 @@ def get_video_metadata(video_path: Path) -> Dict:
 def apply_format_with_aspect_ratio(
     input_path: Path,
     output_path: Path,
-    srt_path: Optional[Path],
     aspect_ratio: str,
     video_info: Dict,
     moment: Dict,
-    font_size: int = 48,
+    transcript: Optional[List[Dict]] = None,
     mute: bool = False,
     use_gpu: bool = False,
     fill: Optional[str] = None,
 ) -> bool:
-    """Format a clip to an aspect ratio (letterbox/pad, never crop). When srt_path is
-    given the captions are burned in; mute drops audio; use_gpu encodes via NVENC.
-    `fill` forces the fit style regardless of source orientation: "blur" (blurred
-    background) or "bars" (solid black letterbox); the default picks per source."""
+    """Format a clip to an aspect ratio (letterbox/pad, never crop). When a transcript is
+    given the moment window is burned in as captions sized to the output; mute drops
+    audio; use_gpu encodes via NVENC. `fill` forces the fit style regardless of source
+    orientation: "blur" (blurred background) or "bars" (solid black letterbox); the
+    default picks per source."""
     dimensions = {
         "9:16": (1080, 1920),
         "16:9": (1920, 1080),
@@ -216,10 +276,15 @@ def apply_format_with_aspect_ratio(
         # Source taller than target - use PAD with blurred background
         video_filter = build_pad_filter_clean(target_width, target_height, aspect_ratio, video_info)
 
-    if srt_path is not None:
-        # Escape for the subtitles filter (':' and "'" are filtergraph separators).
-        esc = str(srt_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        video_filter = f"{video_filter},subtitles='{esc}':force_style='FontSize={font_size}'"
+    if transcript:
+        ass_path = output_path.with_suffix(".ass")
+        if _write_window_ass(
+            transcript, moment.get("start", 0), moment.get("end", 0),
+            ass_path, target_width, target_height,
+        ):
+            # Escape for the ass filter (':' and "'" are filtergraph separators).
+            esc = str(ass_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+            video_filter = f"{video_filter},ass='{esc}'"
 
     audio_args = ["-an"] if mute else [
         "-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
@@ -279,17 +344,6 @@ def build_pad_filter_clean(width: int, height: int, aspect_ratio: str, video_inf
         f"[bg][fg]overlay=(W-w)/2:(H-h)/2,"
         f"eq=contrast=1.05:saturation=1.08"
     )
-
-
-def format_srt_timestamp(seconds: float) -> str:
-    """Convert seconds to SRT timestamp format (HH:MM:SS,mmm)"""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int((seconds % 1) * 1000)
-
-    # ✓ FIXED: Comma not period for SRT format
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
 def add_intro_outro(
