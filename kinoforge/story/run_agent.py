@@ -171,23 +171,26 @@ class RunAgent:
         self.ports.meter(MeterAction.AGENT_RUN, 1)
 
         if is_json:
-            if usage.get("finish_reason") == "length":
-                return {
-                    "ok": False,
-                    "error": (
-                        f"the story was cut off at {usage['output_tokens']} tokens. Ask for "
-                        "fewer scenes, or raise the stage's token budget — a different model "
-                        "will not help."
-                    ),
-                    "usage": self._usage_summary(),
-                }
+            # Parse first: a model can hit the token budget yet still emit complete, valid
+            # JSON, so trust the payload over finish_reason and only complain if it truly
+            # does not parse. When it does not, the finish_reason picks the message.
             try:
                 self.story = _normalize(self.ports.parse_json(text))
             except (ValueError, json.JSONDecodeError):
+                if usage.get("finish_reason") == "length":
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"the story was cut off at {usage['output_tokens']} tokens. Ask for "
+                            "fewer scenes, or raise the stage's token budget. A different model "
+                            "will not help."
+                        ),
+                        "usage": self._usage_summary(),
+                    }
                 return {
                     "ok": False,
                     "error": (
-                        "the model did not return valid JSON — retry, "
+                        "the model did not return valid JSON. Retry, "
                         "or pick another model in Settings."
                     ),
                     "usage": self._usage_summary(),
