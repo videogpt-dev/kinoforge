@@ -2,7 +2,7 @@
 
 Renders one scene image or a character reference sheet: builds the prompt from the frozen
 image presets, calls the gateway, and learns one provider prompt-length ceiling. Stateless
-by design — the caller owns the project store, reference-sheet composition, placement,
+by design, the caller owns the project store, reference-sheet composition, placement,
 progress and billing; the engine only turns a resolved request into image bytes.
 """
 
@@ -24,16 +24,14 @@ from kinoforge.service.models import (
     MusicRenderRequest,
     StoryPromptPreviewRequest,
     VideoRenderRequest,
-    VoiceRenderRequest,
-)
+    VoiceRenderRequest)
 from kinoforge.story.media.images import ImagePainter
 from kinoforge.story.media.music import MusicComposer
 from kinoforge.story.media.videos import ClipMaker
 
 _VALIDATION_LIMIT = re.compile(
     r"input\.prompt.*?(?:less than or equal to|maximum|max(?:imum)? length)\D+(?P<limit>\d+)",
-    re.IGNORECASE | re.DOTALL,
-)
+    re.IGNORECASE | re.DOTALL)
 
 
 def _limit_from_error(error: Exception) -> int:
@@ -56,14 +54,12 @@ class MediaRuntime:
         infrelay = InfrelayClient(self._infrelay_url, self._infrelay_token, request.owner)
         bundle = DefinitionBundle.from_mapping(
             request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0",
-        )
+            engine_version="0.1.0")
         presets = BundleImagePresets(
             bundle,
             scene_key=request.preset_keys.scene,
             portrait_key=request.preset_keys.portrait,
-            negative_key=request.preset_keys.negative,
-        )
+            negative_key=request.preset_keys.negative)
         observed: Dict[str, int] = {"limit": 0}
         painter = ImagePainter(
             generate_image=infrelay.image,
@@ -72,8 +68,7 @@ class MediaRuntime:
             image_negative=presets.image_negative,
             prompt_limit_configured=lambda _p, _k, _m: request.prompt_limit,
             prompt_limit_from_error=_limit_from_error,
-            prompt_limit_remember=lambda _p, _k, _m, limit: observed.__setitem__("limit", limit),
-        )
+            prompt_limit_remember=lambda _p, _k, _m, limit: observed.__setitem__("limit", limit))
 
         reference: Optional[bytes] = (
             base64.b64decode(request.reference_b64) if request.reference_b64 else None
@@ -93,8 +88,7 @@ class MediaRuntime:
                 reference=reference,
                 aspect_ratio=opts.aspect_ratio,
                 mature=opts.mature,
-                seed=opts.seed,
-            )
+                seed=opts.seed)
         else:
             scene = dict(request.scene)
             negative = painter.negative() if opts.apply_negative else ""
@@ -105,8 +99,7 @@ class MediaRuntime:
                 aspect_ratio=opts.aspect_ratio,
                 mature=opts.mature,
                 seed=opts.seed,
-                negative=negative,
-            )
+                negative=negative)
 
         return {
             "image_b64": base64.b64encode(data).decode(),
@@ -119,21 +112,18 @@ class MediaRuntime:
         infrelay = InfrelayClient(self._infrelay_url, self._infrelay_token, request.owner)
         bundle = DefinitionBundle.from_mapping(
             request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0",
-        )
+            engine_version="0.1.0")
         presets = BundleImagePresets(
             bundle,
             scene_key=request.preset_keys.scene,
             portrait_key=request.preset_keys.portrait,
-            negative_key=request.preset_keys.negative,
-        )
+            negative_key=request.preset_keys.negative)
         observed: Dict[str, int] = {"limit": 0}
         maker = ClipMaker(
             generate_video=infrelay.video,
             prompt_limit_configured=lambda _p, _k, _m: request.prompt_limit,
             prompt_limit_from_error=_limit_from_error,
-            prompt_limit_remember=lambda _p, _k, _m, limit: observed.__setitem__("limit", limit),
-        )
+            prompt_limit_remember=lambda _p, _k, _m, limit: observed.__setitem__("limit", limit))
 
         story = dict(request.story)
         scene = dict(request.scene)
@@ -149,8 +139,7 @@ class MediaRuntime:
         motion = presets.image_motion(
             scene.get("prompt") or "",
             story.get("style") or "",
-            key=maker.preset_key(rec, scene) or None,
-        )
+            key=maker.preset_key(rec, scene) or None)
         opts = request.options
         data = maker.generate_clip(
             scene,
@@ -161,8 +150,7 @@ class MediaRuntime:
             seconds=opts.seconds,
             resolution=opts.resolution,
             aspect_ratio=opts.aspect_ratio,
-            mature=opts.mature,
-        )
+            mature=opts.mature)
         return {
             "video_b64": base64.b64encode(data).decode(),
             "observed_limit": observed["limit"],
@@ -173,8 +161,7 @@ class MediaRuntime:
         infrelay = InfrelayClient(self._infrelay_url, self._infrelay_token, request.owner)
         bundle = DefinitionBundle.from_mapping(
             request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0",
-        )
+            engine_version="0.1.0")
         body = bundle.require(DefinitionKind.PRESET, request.music_key).body
 
         def music_preset(mood: str) -> str:
@@ -186,8 +173,7 @@ class MediaRuntime:
             generate_music=lambda prompt, provider, model, *, seconds, project="": infrelay.music(
                 prompt, provider, model, seconds=seconds
             ),
-            music_preset=music_preset,
-        )
+            music_preset=music_preset)
         cfg = {
             "provider": str(request.pick.get("provider") or ""),
             "model": str(request.pick.get("model") or ""),
@@ -202,21 +188,18 @@ class MediaRuntime:
             str(request.pick.get("provider") or ""),
             str(request.pick.get("model") or ""),
             voice=request.options.voice,
-            language=request.options.language,
-        )
+            language=request.options.language)
         return {"audio_b64": base64.b64encode(data).decode(), "logs": []}
 
     def preview_prompts(self, request: StoryPromptPreviewRequest) -> Dict[str, str]:
         bundle = DefinitionBundle.from_mapping(
             request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0",
-        )
+            engine_version="0.1.0")
         presets = BundleImagePresets(
             bundle,
             scene_key=request.preset_keys.scene,
             portrait_key=request.preset_keys.portrait,
-            negative_key=request.preset_keys.negative,
-        )
+            negative_key=request.preset_keys.negative)
         painter = ImagePainter(
             generate_image=lambda *_args, **_kwargs: b"",
             image_scene=presets.image_scene,
@@ -224,14 +207,12 @@ class MediaRuntime:
             image_negative=presets.image_negative,
             prompt_limit_configured=lambda *_args: 0,
             prompt_limit_from_error=lambda _error: 0,
-            prompt_limit_remember=lambda *_args: None,
-        )
+            prompt_limit_remember=lambda *_args: None)
         maker = ClipMaker(
             generate_video=lambda *_args, **_kwargs: b"",
             prompt_limit_configured=lambda *_args: 0,
             prompt_limit_from_error=lambda _error: 0,
-            prompt_limit_remember=lambda *_args: None,
-        )
+            prompt_limit_remember=lambda *_args: None)
         story = dict(request.story)
         scene = dict(request.scene)
         rec = dict(request.rec)
@@ -239,8 +220,7 @@ class MediaRuntime:
         motion = presets.image_motion(
             scene.get("prompt") or "",
             story.get("style") or "",
-            key=maker.preset_key(rec, scene) or None,
-        )
+            key=maker.preset_key(rec, scene) or None)
         return {
             "image_prompt": image_prompt,
             "negative_prompt": painter.negative(),
@@ -249,13 +229,11 @@ class MediaRuntime:
                 scene.get("shot") or {},
                 story,
                 motion,
-                request.video_limit,
-            ),
+                request.video_limit),
         }
 
 
 def media_runtime() -> MediaRuntime:
     return MediaRuntime(
         os.getenv("INFRELAY_URL") or "",
-        os.getenv("INFRELAY_SERVICE_TOKEN") or "",
-    )
+        os.getenv("INFRELAY_SERVICE_TOKEN") or "")

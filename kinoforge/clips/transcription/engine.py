@@ -40,8 +40,7 @@ def _transcript_cache_path(
     model_size: str,
     language: Optional[str],
     cache_dir: Path,
-    output_dir: Optional[Path] = None,
-) -> Path:
+    output_dir: Optional[Path] = None) -> Path:
     """Build a content-addressed cache path for a transcript.
 
     Keyed on the MD5 of the input file plus the model and language, so identical
@@ -94,8 +93,7 @@ def transcribe_video(
         transcription: Dict[str, Any],
         cache_dir: Path,
         transcribe_bytes: TranscribeBytes,
-        meter: Optional[Meter] = None,
-) -> List[Dict]:
+        meter: Optional[Meter] = None) -> List[Dict]:
     """
     Transcribe video with local faster-whisper.
 
@@ -120,7 +118,7 @@ def transcribe_video(
     cache_path = _transcript_cache_path(video_path, model_size, language, cache_dir, output_dir)
     cached = _load_cached_transcript(cache_path)
     if cached is not None:
-        print(f"  ✓ Using cached transcript: {cache_path.name} ({len(cached)} segments)")
+        print(f"  Using cached transcript: {cache_path.name} ({len(cached)} segments)")
         return cached
 
     segments = _dispatch_transcription(
@@ -129,11 +127,10 @@ def transcribe_video(
         language,
         transcription,
         transcribe_bytes,
-        transcriber_func,
-    )
+        transcriber_func)
     if segments:
         _save_cached_transcript(cache_path, segments)
-        print(f"  💾 Saved transcript: {cache_path}")
+        print(f"  Saved transcript: {cache_path}")
         _meter_transcription(segments, model_size, meter)
     return segments
 
@@ -141,7 +138,7 @@ def transcribe_video(
 def _meter_transcription(
     segments: List[Dict], model_size: str, meter: Optional[Meter] = None
 ) -> None:
-    """Charge for the audio actually transcribed, priced by model — a bigger Whisper
+    """Charge for the audio actually transcribed, priced by model, a bigger Whisper
     costs more to run. Only reached on a real transcription: a cache hit returns above,
     so re-running a job does not bill for work nobody did."""
     minutes = (max(float(s.get("end") or 0.0) for s in segments) / 60.0) if segments else 0.0
@@ -155,8 +152,7 @@ def _dispatch_transcription(
         language: Optional[str],
         transcription: Dict[str, Any],
         transcribe_bytes: TranscribeBytes,
-        transcriber_func: Optional[Callable] = None,
-) -> List[Dict]:
+        transcriber_func: Optional[Callable] = None) -> List[Dict]:
     """Run transcription on the gateway (no caching layer)."""
 
     # A caller-supplied transcriber still wins (tests, custom flows).
@@ -173,8 +169,7 @@ def transcribe_words(
         language: Optional[str] = None,
         *,
         transcription: Dict[str, Any],
-        transcribe_bytes: TranscribeBytes,
-) -> List[Dict]:
+        transcribe_bytes: TranscribeBytes) -> List[Dict]:
     """Transcribe an audio file with word-level timestamps (for captions), on the gateway's
     on-box faster-whisper. Returns segments [{start, end, text, words:[{word,start,end}]}];
     empty list if the gateway can't do it."""
@@ -182,11 +177,10 @@ def transcribe_words(
         segments, _meta = transcribe_bytes(
             audio_path.read_bytes(), "whisper", transcription["model"],
             language=language or transcription.get("language") or "",
-            word_timestamps=True, params=_whisper_tuning(transcription),
-        )
+            word_timestamps=True, params=_whisper_tuning(transcription))
         return segments
     except (TranscriptionError, OSError) as e:
-        print(f"  ⚠️  Word-timing transcription failed: {e}")
+        print(f"  Word-timing transcription failed: {e}")
         return []
 
 
@@ -203,7 +197,7 @@ def _interpolate_word_times(starts: List[Optional[float]], ends: List[Optional[f
                             duration: float) -> Tuple[List[float], List[float]]:
     """Fill in timings for words the recognizer merged/dropped/misheard (they have
     no anchor) by spreading each unanchored run evenly across the gap between its
-    neighbours — 0 on the left, the clip duration on the right.
+    neighbours, 0 on the left, the clip duration on the right.
 
     Returns the two fully-populated lists rather than filling the ones passed in: the
     caller's lists hold Optionals by construction, so every later read of them had to
@@ -238,8 +232,7 @@ def _interpolate_word_times(starts: List[Optional[float]], ends: List[Optional[f
 def align_words(text: str, segments: List[Dict], duration: float) -> List[Dict]:
     """Fit the known narration text to spoken word timings, for captions.
 
-    We already have the exact script, so the recognizer's *text* is never trusted —
-    only its *timing*. Each true word is anchored to the matching recognized word;
+    We already have the exact script, so the recognizer's *text* is never trusted, only its *timing*. Each true word is anchored to the matching recognized word;
     any word the recognizer merged, dropped, or misheard is interpolated between its
     neighbours. The result is correctly-spelled captions (no 'Naeai' / 'to -do') that
     still track the voice. With no timings at all, the words are spread evenly.
@@ -285,7 +278,7 @@ def _transcribe_with_local_whisper(
         transcribe_bytes: TranscribeBytes,
         language: Optional[str] = None
 ) -> List[Dict]:
-    """Transcribe on the gateway's on-box faster-whisper — the default backend, keyless.
+    """Transcribe on the gateway's on-box faster-whisper, the default backend, keyless.
     Core extracts the audio and ships the bytes along with the store's Whisper tuning
     (device, compute type, beam size, VAD)."""
     print(f"  Transcribing with faster-whisper (gateway, {model_size})...")
@@ -293,10 +286,9 @@ def _transcribe_with_local_whisper(
     try:
         segments, meta = transcribe_bytes(
             audio_path.read_bytes(), "whisper", model_size or "turbo",
-            language=language or "", params=_whisper_tuning(transcription),
-        )
+            language=language or "", params=_whisper_tuning(transcription))
         detected = meta.get("language")
-        print(f"  ✓ Transcribed {len(segments)} segments"
+        print(f"  Transcribed {len(segments)} segments"
               + (f" | detected language: {detected}" if detected else ""))
         return segments
     finally:
@@ -345,8 +337,7 @@ class Transcriber:
         transcription: Dict[str, Any],
         cache_dir: Path,
         transcribe_bytes: TranscribeBytes,
-        meter: Optional[Meter] = None,
-    ) -> None:
+        meter: Optional[Meter] = None) -> None:
         self._transcription = dict(transcription)
         self._cache_dir = Path(cache_dir)
         self._transcribe_bytes = transcribe_bytes
@@ -358,8 +349,7 @@ class Transcriber:
         model_size: Optional[str] = None,
         language: Optional[str] = None,
         transcriber_func: Optional[Callable] = None,
-        output_dir: Optional[Path] = None,
-    ) -> List[Dict]:
+        output_dir: Optional[Path] = None) -> List[Dict]:
         return transcribe_video(
             video_path,
             model_size,
@@ -369,8 +359,7 @@ class Transcriber:
             transcription=self._transcription,
             cache_dir=self._cache_dir,
             transcribe_bytes=self._transcribe_bytes,
-            meter=self._meter,
-        )
+            meter=self._meter)
 
     def transcribe_words(
         self, audio_path: Path, language: Optional[str] = None
@@ -379,5 +368,4 @@ class Transcriber:
             audio_path,
             language,
             transcription=self._transcription,
-            transcribe_bytes=self._transcribe_bytes,
-        )
+            transcribe_bytes=self._transcribe_bytes)

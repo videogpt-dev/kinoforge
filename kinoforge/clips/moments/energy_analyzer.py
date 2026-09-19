@@ -170,7 +170,7 @@ def detect_energy_spikes(
     spikes.sort(key=lambda s: s.energy_level, reverse=True)
 
     if verbose:
-        print(f"  ✓ Detected {len(spikes)} energy spikes")
+        print(f"  Detected {len(spikes)} energy spikes")
         for spike in spikes[:5]:
             print(f"    {spike.start:.2f}s-{spike.end:.2f}s: {spike.energy_level:.1f}/100")
 

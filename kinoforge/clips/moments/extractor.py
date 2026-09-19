@@ -57,7 +57,7 @@ def extract_auto_moments(
         from kinoforge.clips.signals.hooks import HookDetector
     except ImportError:
         if verbose:
-            print("  ⚠️  Energy analyzer not available, using traditional extraction")
+            print("  Energy analyzer not available, using traditional extraction")
         return extract_candidate_moments(transcript, min_length, max_length)
 
     if verbose:
@@ -77,7 +77,7 @@ def extract_auto_moments(
 
         if not energy_spikes:
             if verbose:
-                print("  ⚠️  No energy spikes detected, falling back to traditional extraction")
+                print("  No energy spikes detected, falling back to traditional extraction")
             return extract_candidate_moments(transcript, min_length, max_length)
 
         # Step 2: Combine with keyword detection
@@ -137,12 +137,12 @@ def extract_auto_moments(
         # meet the duration window), fall back to the transcript sliding window.
         if not final_moments:
             if verbose:
-                print("  ⚠️  Energy path yielded no valid-length moments, "
+                print("  Energy path yielded no valid-length moments, "
                       "falling back to transcript extraction")
             return extract_candidate_moments(transcript, min_length, max_length)
 
         if verbose:
-            print(f"  ✓ Generated {len(final_moments)} moments")
+            print(f"  Generated {len(final_moments)} moments")
             for i, m in enumerate(final_moments, 1):
                 print(f"    {i}. {m['start']:.1f}s-{m['end']:.1f}s (score: {m['score']:.1f}/10)")
 
@@ -150,7 +150,7 @@ def extract_auto_moments(
 
     except Exception as e:
         if verbose:
-            print(f"  ✗ Auto-generation failed: {e}")
+            print(f"  Auto-generation failed: {e}")
             print("  Falling back to traditional extraction...")
         return extract_candidate_moments(transcript, min_length, max_length)
 

@@ -23,8 +23,7 @@ class InfrelayClient:
         model: str,
         payload: Dict[str, Any],
         *,
-        timeout: float,
-    ) -> Dict[str, Any]:
+        timeout: float) -> Dict[str, Any]:
         if not self._url:
             raise InfrelayError("INFRELAY_URL is required")
         body: Dict[str, Any] = {
@@ -43,8 +42,7 @@ class InfrelayClient:
                 f"{self._url}/v1/generate",
                 headers=headers,
                 json=body,
-                timeout=timeout,
-            )
+                timeout=timeout)
         except httpx.HTTPError as exc:
             raise InfrelayError(f"infrelay {kind}/{provider} unreachable: {exc}") from exc
         if response.status_code >= 400:
@@ -61,8 +59,7 @@ class InfrelayClient:
         prompt: str,
         *,
         max_tokens: int,
-        temperature: float,
-    ) -> str:
+        temperature: float) -> str:
         result = self._generate(
             "text",
             provider,
@@ -73,8 +70,7 @@ class InfrelayClient:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             },
-            timeout=300,
-        )
+            timeout=300)
         output = result.get("output") or {}
         if output.get("type") != "text":
             raise InfrelayError("infrelay text returned unsupported output")
@@ -88,9 +84,8 @@ class InfrelayClient:
         user: str,
         *,
         temperature: float,
-        max_tokens: int,
-    ) -> Tuple[str, Dict]:
-        """One chat completion. Returns (text, usage) — usage carries model, token counts
+        max_tokens: int) -> Tuple[str, Dict]:
+        """One chat completion. Returns (text, usage), usage carries model, token counts
         and finish_reason so the story stage runner can detect a cut-off answer."""
         result = self._generate(
             "text",
@@ -102,8 +97,7 @@ class InfrelayClient:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             },
-            timeout=300,
-        )
+            timeout=300)
         output = result.get("output") or {}
         if output.get("type") != "text":
             raise InfrelayError("infrelay text returned unsupported output")
@@ -119,8 +113,7 @@ class InfrelayClient:
         seed: int | None = None,
         mature: bool = False,
         negative: str = "",
-        reference: bytes | None = None,
-    ) -> bytes:
+        reference: bytes | None = None) -> bytes:
         """Image bytes from the gateway. Shapes the same input the in-process path builds."""
         payload: Dict[str, Any] = {
             "prompt": prompt,
@@ -148,8 +141,7 @@ class InfrelayClient:
         resolution: int,
         aspect_ratio: str,
         mature: bool = False,
-        image: bytes | None = None,
-    ) -> bytes:
+        image: bytes | None = None) -> bytes:
         """Video (mp4) bytes from the gateway."""
         payload: Dict[str, Any] = {
             "prompt": prompt,
@@ -180,8 +172,7 @@ class InfrelayClient:
         model: str,
         *,
         voice: str = "",
-        language: str = "",
-    ) -> bytes:
+        language: str = "") -> bytes:
         payload: Dict[str, Any] = {"text": text}
         if voice:
             payload["voice"] = voice
@@ -208,8 +199,7 @@ class InfrelayClient:
         audio: bytes,
         provider: str,
         model: str,
-        **kwargs: Any,
-    ) -> Tuple[List[Dict], Dict]:
+        **kwargs: Any) -> Tuple[List[Dict], Dict]:
         payload: Dict[str, Any] = {
             "audio_b64": base64.b64encode(audio).decode(),
         }
@@ -225,8 +215,7 @@ class InfrelayClient:
             provider,
             model,
             payload,
-            timeout=1800,
-        )
+            timeout=1800)
         output = result.get("output") or {}
         if output.get("type") != "transcript":
             raise InfrelayError("infrelay transcribe returned unsupported output")

@@ -1,7 +1,4 @@
-"""
-Enhanced formatter.py - FIXED VERSION
-Multiple aspect ratios and advanced features with all errors corrected
-"""
+"""Format clips to platform aspect ratios, letterbox or blurred pad, optional burned captions."""
 
 import json
 import subprocess
@@ -118,8 +115,7 @@ def format_clips_multi_platform(
     *,
     rendering: Dict[str, Any],
     processing: Dict[str, Any],
-    meter: Optional[Meter] = None,
-) -> Dict[str, List[Path]]:
+    meter: Optional[Meter] = None) -> Dict[str, List[Path]]:
     """Format clips for multiple platforms with different aspect ratios.
 
     Honours the injected render/processing settings: burn_subtitles +
@@ -146,9 +142,8 @@ def format_clips_multi_platform(
             output_path = output_dir / output_name
             ok = apply_format_with_aspect_ratio(
                 clip_path, output_path, aspect_ratio, video_info, moment,
-                transcript=transcript if burn else None, mute=mute, use_gpu=use_gpu,
-            )
-            print(f"    {'✓' if ok else '✗'} {aspect_ratio}: {output_name}")
+                transcript=transcript if burn else None, mute=mute, use_gpu=use_gpu)
+            print(f"    {'ok' if ok else 'failed'} {aspect_ratio}: {output_name}")
             produced.append((aspect_ratio, output_path, ok))
         return produced
 
@@ -178,10 +173,7 @@ def format_clips_multi_platform(
 
 
 def get_video_metadata(video_path: Path) -> Dict:
-    """
-    Get detailed video metadata using ffprobe
-    ✓ FIXED: Safe FPS parsing, added timeout
-    """
+    """Width, height, duration, aspect ratio and fps from ffprobe. Falls back to 1080p/30 on error."""
     cmd = [
         'ffprobe',
         '-v', 'quiet',
@@ -192,7 +184,6 @@ def get_video_metadata(video_path: Path) -> Dict:
     ]
 
     try:
-        # ✓ FIXED: Added timeout
         result = subprocess.run(cmd, capture_output=True, check=True, timeout=30)
         data = json.loads(result.stdout)
 
@@ -201,7 +192,6 @@ def get_video_metadata(video_path: Path) -> Dict:
             {}
         )
 
-        # ✓ FIXED: Safe FPS parsing without eval()
         fps = 30.0
         fps_str = video_stream.get('r_frame_rate', '30/1')
         if fps_str and '/' in fps_str:
@@ -244,8 +234,7 @@ def apply_format_with_aspect_ratio(
     transcript: Optional[List[Dict]] = None,
     mute: bool = False,
     use_gpu: bool = False,
-    fill: Optional[str] = None,
-) -> bool:
+    fill: Optional[str] = None) -> bool:
     """Format a clip to an aspect ratio (letterbox/pad, never crop). When a transcript is
     given the moment window is burned in as captions sized to the output; mute drops
     audio; use_gpu encodes via NVENC. `fill` forces the fit style regardless of source
@@ -267,21 +256,19 @@ def apply_format_with_aspect_ratio(
     elif fill == "bars":
         video_filter = build_letterbox_filter(target_width, target_height, aspect_ratio, video_info)
     elif abs(source_ar - target_ar) < 0.01:
-        # Already correct aspect ratio - just scale
         video_filter = build_scale_filter_clean(target_width, target_height, aspect_ratio)
     elif source_ar > target_ar:
-        # Source wider than target (e.g., 16:9 to 9:16) - use LETTERBOX, never crop
+        # Wider than target: letterbox, never crop.
         video_filter = build_letterbox_filter(target_width, target_height, aspect_ratio, video_info)
     else:
-        # Source taller than target - use PAD with blurred background
+        # Taller than target: pad with a blurred background.
         video_filter = build_pad_filter_clean(target_width, target_height, aspect_ratio, video_info)
 
     if transcript:
         ass_path = output_path.with_suffix(".ass")
         if _write_window_ass(
             transcript, moment.get("start", 0), moment.get("end", 0),
-            ass_path, target_width, target_height,
-        ):
+            ass_path, target_width, target_height):
             # Escape for the ass filter (':' and "'" are filtergraph separators).
             esc = str(ass_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
             video_filter = f"{video_filter},ass='{esc}'"
@@ -303,8 +290,8 @@ def apply_format_with_aspect_ratio(
         # the stderr print with `e` unbound, raising NameError over the real ffmpeg error.
         e: Exception = first
         if use_gpu:
-            # NVENC unavailable (e.g. no GPU) — fall back to libx264.
-            print("      ⚠️  GPU encode failed, falling back to libx264...")
+            # NVENC unavailable (e.g. no GPU): fall back to libx264.
+            print("      GPU encode failed, falling back to libx264")
             try:
                 return _run(False)
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e2:
@@ -315,7 +302,6 @@ def apply_format_with_aspect_ratio(
 
 
 def build_scale_filter_clean(width: int, height: int, aspect_ratio: str) -> str:
-    """Simple scale with subtle enhancement - NO CAPTIONS"""
     return (
         f"scale={width}:{height},"
         f"eq=contrast=1.05:saturation=1.08"
@@ -323,7 +309,6 @@ def build_scale_filter_clean(width: int, height: int, aspect_ratio: str) -> str:
 
 
 def build_letterbox_filter(width: int, height: int, aspect_ratio: str, video_info: Dict) -> str:
-    """Scale then add black letterbox bars - PRESERVES ALL CONTENT"""
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
@@ -332,11 +317,11 @@ def build_letterbox_filter(width: int, height: int, aspect_ratio: str, video_inf
 
 
 def build_pad_filter_clean(width: int, height: int, aspect_ratio: str, video_info: Dict) -> str:
-    """Scale then add blurred background padding - ELEGANT, NO CROP.
+    """Scale to fit over a blurred copy of itself, no crop.
 
     A single-input simple filtergraph: `split` the source into a scaled-to-fit
     foreground and a blurred fill, then overlay. (Referencing `[0:v]` twice would
-    make it a complex graph that -vf rejects — split keeps it -vf compatible.)"""
+    make it a complex graph that -vf rejects, split keeps it -vf compatible.)"""
     return (
         f"split=2[main][blur];"
         f"[blur]scale={width}:{height},boxblur=20:1[bg];"
@@ -344,103 +329,3 @@ def build_pad_filter_clean(width: int, height: int, aspect_ratio: str, video_inf
         f"[bg][fg]overlay=(W-w)/2:(H-h)/2,"
         f"eq=contrast=1.05:saturation=1.08"
     )
-
-
-def add_intro_outro(
-    clip_path: Path,
-    output_path: Path,
-    intro_path: Path | None = None,
-    outro_path: Path | None = None
-) -> bool:
-    """Add intro and/or outro to clip"""
-    if not intro_path and not outro_path:
-        return False
-
-    concat_file = clip_path.parent / f"concat_{clip_path.stem}.txt"
-
-    # ✓ FIXED: Added encoding
-    with open(concat_file, 'w', encoding='utf-8') as f:
-        if intro_path:
-            f.write(f"file '{intro_path}'\n")
-        f.write(f"file '{clip_path}'\n")
-        if outro_path:
-            f.write(f"file '{outro_path}'\n")
-
-    cmd = [
-        'ffmpeg',
-        '-y',
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', str(concat_file),
-        '-c', 'copy',
-        str(output_path)
-    ]
-
-    try:
-        # ✓ FIXED: Added timeout
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE,
-                      stderr=subprocess.PIPE, timeout=300)
-        concat_file.unlink()
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        if concat_file.exists():
-            concat_file.unlink()
-        return False
-
-
-def add_zoom_effect(
-    input_path: Path,
-    output_path: Path,
-    zoom_factor: float = 1.1
-) -> bool:
-    """Add subtle zoom effect for engagement"""
-    cmd = [
-        'ffmpeg',
-        '-y',
-        '-i', str(input_path),
-        '-vf', f"zoompan=z='min(zoom+0.0015,{zoom_factor})':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920",
-        '-c:a', 'copy',
-        str(output_path)
-    ]
-
-    try:
-        # ✓ FIXED: Added timeout
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE,
-                      stderr=subprocess.PIPE, timeout=300)
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return False
-
-
-def add_progress_bar(
-    input_path: Path,
-    output_path: Path,
-    bar_height: int = 8,
-    bar_color: str = "white"
-) -> bool:
-    """Add progress bar at top of video"""
-    color_map = {
-        'white': '0xFFFFFF',
-        'red': '0xFF0000',
-        'blue': '0x0000FF',
-        'green': '0x00FF00'
-    }
-
-    color_hex = color_map.get(bar_color, '0xFFFFFF')
-
-    cmd = [
-        'ffmpeg',
-        '-y',
-        '-i', str(input_path),
-        '-vf', f"drawbox=x=0:y=0:w='iw*t/duration':h={bar_height}:color={color_hex}:t=fill",
-        '-c:a', 'copy',
-        str(output_path)
-    ]
-
-    try:
-        # ✓ FIXED: Added timeout
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE,
-                      stderr=subprocess.PIPE, timeout=300)
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return False

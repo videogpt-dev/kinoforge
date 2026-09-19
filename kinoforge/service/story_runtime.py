@@ -3,7 +3,7 @@
 Wires the injected story writer to Infrelay text and a resolved DefinitionBundle: the
 caller freezes the screenwriter agent, prompts and fragments, and passes the text route;
 this runtime executes the stages and returns the StoryPlan, meter events and logs. It owns
-no durable state — cloud core (or the self-host runtime) persists the story on the project.
+no durable state, cloud core (or the self-host runtime) persists the story on the project.
 """
 
 from __future__ import annotations
@@ -49,8 +49,7 @@ class StoryRuntime:
     ) -> tuple[StoryPorts, EventLogger, EventMeter, Dict[str, Any]]:
         bundle = DefinitionBundle.from_mapping(
             request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0",
-        )
+            engine_version="0.1.0")
         renderer = DefinitionRenderer(bundle)
         infrelay = InfrelayClient(self._infrelay_url, self._infrelay_token, request.owner)
         logger = EventLogger()
@@ -67,8 +66,7 @@ class StoryRuntime:
             project: str,
             temperature: float,
             max_tokens: int,
-            bill: bool,
-        ) -> Tuple[str, Dict[str, Any]]:
+            bill: bool) -> Tuple[str, Dict[str, Any]]:
             over = {**default_pick, **(pick or {})}
             provider = str(over.get("provider") or "")
             model = str(over.get("model") or "")
@@ -85,8 +83,7 @@ class StoryRuntime:
             *,
             pick: Dict[str, Any],
             temperature: float,
-            max_tokens: int,
-        ) -> Dict[str, Any]:
+            max_tokens: int) -> Dict[str, Any]:
             text, _ = complete(
                 purpose,
                 system,
@@ -95,8 +92,7 @@ class StoryRuntime:
                 project="",
                 temperature=temperature,
                 max_tokens=max_tokens,
-                bill=True,
-            )
+                bill=True)
             return _parse_json(text)
 
         def prompt(key: str, **params: object) -> str:
@@ -128,15 +124,13 @@ class StoryRuntime:
             contract=contract,
             language_rule=language_rule,
             story_budget=story_budget,
-            meter=meter,
-        )
+            meter=meter)
         return ports, logger, meter, default_pick
 
     def write(
         self,
         request: StoryWriteRequest,
-        is_cancelled: Optional[Callable[[], bool]] = None,
-    ) -> Dict[str, Any]:
+        is_cancelled: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
         ports, logger, meter, default_pick = self._ports(request)
 
         context = request.context
@@ -152,8 +146,7 @@ class StoryRuntime:
             series_name=context.series_name,
             series_episodes=context.series_episodes,
             series_position=context.series_position,
-            mature=context.mature,
-        )
+            mature=context.mature)
         # Extra caller-set context flags the writer reads (e.g. require_motion for the
         # Video-Mode quality check) ride through the request's open context.
         extras = context.model_dump()
@@ -170,8 +163,7 @@ class StoryRuntime:
             on_stage=on_stage,
             pick=default_pick,
             project=request.project_id,
-            is_cancelled=is_cancelled,
-        ).run()
+            is_cancelled=is_cancelled).run()
         return {"result": result, "meter_events": meter.events, "logs": logger.entries}
 
     def operate(self, request: StoryOperationRequest) -> Dict[str, Any]:
@@ -186,28 +178,24 @@ class StoryRuntime:
                 request.agent,
                 str(payload.get("instructions") or ""),
                 default_pick,
-                int(budgets.get("rewrite") or 0),
-            )
+                int(budgets.get("rewrite") or 0))
         elif request.operation is StoryOperation.REWRITE_CHARACTERS:
             result = operations.rewrite_characters(
                 dict(payload.get("record") or {}),
                 request.agent,
                 default_pick,
-                int(budgets.get("rewrite") or 0),
-            )
+                int(budgets.get("rewrite") or 0))
         elif request.operation is StoryOperation.TRANSLATE:
             result = operations.translate(
                 dict(payload.get("story") or {}),
                 str(payload.get("language") or ""),
                 default_pick,
-                int(budgets.get("translation") or 0),
-            )
+                int(budgets.get("translation") or 0))
         elif request.operation is StoryOperation.DIRECT_SHOTS:
             result = operations.direct_shots(
                 dict(payload.get("record") or {}),
                 default_pick,
-                int(budgets.get("rewrite") or 0),
-            )
+                int(budgets.get("rewrite") or 0))
         else:
             result = operations.suggest_field(
                 str(payload.get("kind") or ""),
@@ -215,13 +203,11 @@ class StoryRuntime:
                 str(payload.get("description") or ""),
                 str(payload.get("idea") or ""),
                 default_pick,
-                str(request.config.get("fallback_model") or ""),
-            )
+                str(request.config.get("fallback_model") or ""))
         return {"result": result, "meter_events": meter.events, "logs": logger.entries}
 
 
 def story_runtime() -> StoryRuntime:
     return StoryRuntime(
         os.getenv("INFRELAY_URL") or "",
-        os.getenv("INFRELAY_SERVICE_TOKEN") or "",
-    )
+        os.getenv("INFRELAY_SERVICE_TOKEN") or "")

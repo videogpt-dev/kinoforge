@@ -133,7 +133,7 @@ class ClipsRunner:
         try:
             if self._stop_if_cancelled(result):
                 return result
-            self._logger.info(f"🎬 Starting processing: {video_path.name}")
+            self._logger.info(f"Starting: {video_path.name}")
 
             if (
                 config.get("skip_already_processed")
@@ -142,7 +142,7 @@ class ClipsRunner:
                 and slug
                 and ctx.store.list_clips(job_id)
             ):
-                self._logger.info("⏭️  Skipping: video already has clips (skip_already_processed).")
+                self._logger.info("Skipping: already has clips (skip_already_processed)")
                 result.status = "skipped"
                 return result
 
@@ -155,7 +155,7 @@ class ClipsRunner:
                 return result
 
             self._stage(result, ClipStage.TRANSCRIBE, StageStatus.RUNNING)
-            self._logger.info("📝 Transcribing video...")
+            self._logger.info("Transcribing")
             try:
                 restart = bool(config.get("force"))
                 fresh = restart or not config.get("try_youtube_subs", True)
@@ -166,13 +166,13 @@ class ClipsRunner:
                     transcript = pretranscript
                     self._stage(result, ClipStage.TRANSCRIBE, StageStatus.SKIPPED)
                     self._logger.success(
-                        f"Using YouTube captions ({len(transcript)} segments) — skipped transcription"
+                        f"Using YouTube captions ({len(transcript)} segments), skipped transcription"
                     )
                 elif saved:
                     transcript = saved
                     self._stage(result, ClipStage.TRANSCRIBE, StageStatus.SKIPPED)
                     self._logger.success(
-                        f"♻️  Reusing saved transcript ({len(transcript)} segments) — no re-transcription"
+                        f"Reusing saved transcript ({len(transcript)} segments)"
                     )
                 else:
                     transcript = self._transcribe_video(
@@ -196,7 +196,7 @@ class ClipsRunner:
                 return result
 
             self._stage(result, ClipStage.MOMENTS, StageStatus.RUNNING)
-            self._logger.info("🎯 Finding the best moments...")
+            self._logger.info("Finding moments")
             discovered = False
             try:
                 moments: List[Dict[str, Any]] = []
@@ -258,7 +258,7 @@ class ClipsRunner:
                     except Exception as exc:
                         self._logger.warning(f"Provider filtering failed: {exc}")
 
-                self._logger.info("⭐ Scoring moments...")
+                self._logger.info("Scoring moments")
                 try:
                     if provider and hasattr(provider, "score_moments"):
                         moments = provider.score_moments(moments, transcript)

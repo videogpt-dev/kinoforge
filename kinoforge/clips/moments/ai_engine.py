@@ -117,7 +117,7 @@ class AiMomentEngine:
             })
 
         deduped = self._dedupe_overlaps(moments)
-        print(f"  ✓ Chose {len(deduped)} moments from the full transcript "
+        print(f"  Chose {len(deduped)} moments from the full transcript "
               f"({len(chunks)} pass(es), {len(raw)} raw picks)")
         return deduped
 
@@ -213,8 +213,8 @@ class AiMomentEngine:
                 kept.append(moment)
 
         n_batches = (len(top) + self._batch_size - 1) // self._batch_size
-        print(f"  ✓ Analyzed {len(top)} moments in {n_batches} request(s) "
-              f"→ kept {len(kept)}, adjusted {adjusted} boundaries")
+        print(f"  Analyzed {len(top)} moments in {n_batches} request(s), "
+              f"kept {len(kept)}, adjusted {adjusted} boundaries")
         return kept if kept else top[:10]
 
     def score_moments(self, moments: List[Dict], transcript: List[Dict]) -> List[Dict]:
@@ -239,7 +239,7 @@ class AiMomentEngine:
 
         ranked = sorted(moments, key=lambda m: m.get("score", 0), reverse=True)
         if ranked:
-            print(f"  ✓ Ranked {len(ranked)} moments "
+            print(f"  Ranked {len(ranked)} moments "
                   f"(top: {ranked[0].get('score', 0):.0f}, low: {ranked[-1].get('score', 0):.0f})")
         return ranked
 

@@ -1,7 +1,7 @@
 """Background-music generation kernel for a story video.
 
 Derives an instrumental mood from the story's style/logline and sizes one bed to the
-video's length (capped so a music model doesn't run forever — assembly loops it under the
+video's length (capped so a music model doesn't run forever, assembly loops it under the
 voiceover). The provider call and its billing are injected; storage and job state stay
 with the caller.
 """
@@ -44,5 +44,4 @@ class MusicComposer:
             cfg["provider"],
             cfg["model"],
             seconds=self.seconds(story),
-            project=project,
-        )
+            project=project)
