@@ -1,43 +1,25 @@
 # Kinoforge
 
-Source-available generation engine behind VideoGPT. Internal segments: clips, series, and
-story. Cloud core invokes engine through REST. Kinoforge never imports closed `app.*` code.
+The generation engine behind VideoGPT. It runs the clip, story, and series pipelines and is
+driven over REST.
 
-Current implementation:
+## What it does
 
-- Clips pipeline: transcription, moment discovery/scoring, rendering, formatting, and project
-  record generation.
-- Story pipeline: screenwriter stages, story operations, prompt previews, and image, video, music,
-  and voice generation through Infrelay.
-- Series pipeline: recurring cast portraits and connected episode planning. Approved episodes run
+- **Clips** turn a long video into short vertical clips: transcribe, find the best moments,
+  render, and format.
+- **Story** writes a scene-by-scene script and generates the image, video, music, and voice for
+  each scene through Infrelay.
+- **Series** plans a recurring show with a consistent cast, then runs each approved episode
   through the Story pipeline.
-- REST service on port `8100`.
-- Inference through `INFRELAY_URL`.
-- Optional bearer authentication through `KINOFORGE_SERVICE_TOKEN`.
-- Shared-volume media adapter for current cloud deployment.
-- Meter events returned to caller; cloud core performs billing.
-- Cloud core owns durable jobs, projects, queue, retry, cancellation, and final artifact
-  placement.
-- Dataless execution boundary: caller supplies frozen resolved definitions; Kinoforge owns no
-  catalog, prompt bodies, database, or durable queue.
 
-## Definition boundary
+## How it fits in
 
-Public community definitions live in separate versioned catalog repository. Cloud private
-professional definitions remain in closed cloud database. Cloud core or self-host thin runtime
-resolves selected agent stages, screenwriters, presets, and fragments into immutable bundle before
-calling Kinoforge.
+Kinoforge is stateless by design. The caller resolves the definitions a run needs, such as agents,
+screenwriters, and presets, into a frozen bundle and passes it in
 
-Self-host consumes pinned community releases from disk and can select or assign definitions. It
-does not store prompt bodies in database or expose definition authoring.
+Community definitions about prompts(screenwriters,presets,etc) live in a separate repo Videogpt-catalog.
 
-See [ADR 0001](docs/decisions/0001-dataless-engine-and-definition-catalogs.md) for accepted
-ownership and catalog rules.
-
-See [clips reference flow](docs/clips-reference-flow.md) for Cloud submission, queue, definition
-snapshot, REST execution, cancellation, persistence, artifacts, and billing path.
-
-Run service:
+## Running it
 
 ```bash
 docker build -t kinoforge apps/kinoforge
@@ -48,17 +30,10 @@ docker run --rm -p 8100:8100 \
   kinoforge
 ```
 
-Health endpoint: `GET /health`.
+Inference runs through `INFRELAY_URL`. Set `KINOFORGE_SERVICE_TOKEN` to require a bearer token.
 
-API explorer: `GET /docs`. ReDoc: `GET /redoc`. OpenAPI schema: `GET /openapi.json`.
+## API
 
-Main execution endpoint: `POST /v1/segments/{code_name}/execute`. Segment-scoped media probe,
-base render, aspect-format, and transcription-alignment endpoints support cloud
-editor/publishing flows without Python imports.
-
-Segment discovery: `GET /v1/segments` returns stable names, labels, icons, descriptions,
-implementation status, API versions, and execution paths for clips, story, and series.
-
-Status: clips, story, and series REST boundaries are available. Cloud Core owns durable workflows
-and Studio owns final assembly. The shared-volume media adapter is the current cloud transport;
-remote Assets transport and the self-host thin runtime remain separate follow-up work.
+- `GET /health`, `GET /docs`, `GET /redoc`, `GET /openapi.json`
+- `GET /v1/segments` lists the segments (clips, story, series) with their labels and status.
+- `POST /v1/segments/{code_name}/execute` runs one.
