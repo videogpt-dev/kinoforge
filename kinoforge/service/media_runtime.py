@@ -88,7 +88,10 @@ class MediaRuntime:
                 reference=reference,
                 aspect_ratio=opts.aspect_ratio,
                 mature=opts.mature,
-                seed=opts.seed)
+                seed=opts.seed,
+                enhance=opts.enhance,
+                enhance_style=opts.enhance_style,
+            )
         else:
             scene = dict(request.scene)
             negative = painter.negative() if opts.apply_negative else ""
@@ -99,7 +102,10 @@ class MediaRuntime:
                 aspect_ratio=opts.aspect_ratio,
                 mature=opts.mature,
                 seed=opts.seed,
-                negative=negative)
+                negative=negative,
+                enhance=opts.enhance,
+                enhance_style=opts.enhance_style,
+            )
 
         return {
             "image_b64": base64.b64encode(data).decode(),
@@ -150,7 +156,10 @@ class MediaRuntime:
             seconds=opts.seconds,
             resolution=opts.resolution,
             aspect_ratio=opts.aspect_ratio,
-            mature=opts.mature)
+            mature=opts.mature,
+            enhance=opts.enhance,
+            enhance_style=opts.enhance_style,
+        )
         return {
             "video_b64": base64.b64encode(data).decode(),
             "observed_limit": observed["limit"],

@@ -113,7 +113,10 @@ class InfrelayClient:
         seed: int | None = None,
         mature: bool = False,
         negative: str = "",
-        reference: bytes | None = None) -> bytes:
+        reference: bytes | None = None,
+        enhance: bool = False,
+        enhance_style: str = "",
+    ) -> bytes:
         """Image bytes from the gateway. Shapes the same input the in-process path builds."""
         payload: Dict[str, Any] = {
             "prompt": prompt,
@@ -128,6 +131,10 @@ class InfrelayClient:
             payload["negative"] = negative
         if reference is not None:
             payload["reference_b64"] = base64.b64encode(reference).decode()
+        if enhance:
+            payload["enhance"] = True
+            if enhance_style:
+                payload["enhance_style"] = enhance_style
         result = self._generate("image", provider, model, payload, timeout=600)
         return self._output_bytes(result.get("output") or {})
 
@@ -141,7 +148,10 @@ class InfrelayClient:
         resolution: int,
         aspect_ratio: str,
         mature: bool = False,
-        image: bytes | None = None) -> bytes:
+        image: bytes | None = None,
+        enhance: bool = False,
+        enhance_style: str = "",
+    ) -> bytes:
         """Video (mp4) bytes from the gateway."""
         payload: Dict[str, Any] = {
             "prompt": prompt,
@@ -154,6 +164,10 @@ class InfrelayClient:
             payload["model"] = model
         if image is not None:
             payload["reference_b64"] = base64.b64encode(image).decode()
+        if enhance:
+            payload["enhance"] = True
+            if enhance_style:
+                payload["enhance_style"] = enhance_style
         result = self._generate("video", provider, model, payload, timeout=1800)
         return self._output_bytes(result.get("output") or {})
 

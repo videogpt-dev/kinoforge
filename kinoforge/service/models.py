@@ -275,6 +275,14 @@ class ImageOptionsRequest(BaseModel):
         default=False,
         description="Attach the negative preset to the provider request (scene mode only).",
     )
+    enhance: bool = Field(
+        default=False,
+        description="Rewrite the prompt through a text model before generation.",
+    )
+    enhance_style: str = Field(
+        default="",
+        description="Optional style to steer the prompt rewrite (ignored when enhance is off).",
+    )
 
 
 class ImageRenderRequest(BaseModel):
@@ -330,6 +338,14 @@ class VideoOptionsRequest(BaseModel):
     resolution: int = Field(default=720, gt=0)
     aspect_ratio: str = "9:16"
     mature: bool = False
+    enhance: bool = Field(
+        default=False,
+        description="Rewrite the prompt through a text model before generation.",
+    )
+    enhance_style: str = Field(
+        default="",
+        description="Optional style to steer the prompt rewrite (ignored when enhance is off).",
+    )
 
 
 class VideoRenderRequest(BaseModel):

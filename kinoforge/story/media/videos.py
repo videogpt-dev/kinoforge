@@ -69,6 +69,9 @@ class ClipMaker:
         style = (story.get("style") or "").strip()
         scene_text = (scene.get("prompt") or "").strip()
         cast = self.cast_in(story)
+        # A model that voices its own scene needs the words to say; a voiceover model gets
+        # them from the separate TTS stage, so leave its clip silent of dialogue.
+        spoken = self._spoken_line(scene)
         parts = [
             ("", scene_text),
             ("Action", (shot.get("action") or "").strip()),
@@ -77,6 +80,7 @@ class ClipMaker:
             ("Characters", cast),
             ("Cinematography", motion.strip()),
             ("Style", style),
+            ("Spoken", spoken),
         ]
         prompt = join_labeled(parts)
         if not max_chars or len(prompt) <= max_chars:
@@ -89,8 +93,18 @@ class ClipMaker:
             ("Characters", self.cast_in(story, scene_text, compact=True)),
             ("Cinematography", leading_sentences(motion, 2)),
             ("Style", leading_sentences(style, 2)),
+            ("Spoken", spoken),
         ]
         return fit_labeled(compact_parts, max_chars)
+
+    def _spoken_line(self, scene: Dict) -> str:
+        """The exact words a native-audio clip should voice: the scene's narration, kept
+        verbatim so the spoken track matches the script."""
+        from kinoforge.story.audio_modes import uses_native_audio
+
+        if not uses_native_audio(scene):
+            return ""
+        return (scene.get("narration") or "").strip()
 
     def to_animate(self, scenes: List[Dict]) -> List[int]:
         """The indexes worth buying a clip for. The writer marks them (scenes[].motion);
