@@ -69,9 +69,6 @@ class ClipMaker:
         style = (story.get("style") or "").strip()
         scene_text = (scene.get("prompt") or "").strip()
         cast = self.cast_in(story)
-        # A model that voices its own scene needs the words to say; a voiceover model gets
-        # them from the separate TTS stage, so leave its clip silent of dialogue.
-        spoken = self._spoken_line(scene)
         parts = [
             ("", scene_text),
             ("Action", (shot.get("action") or "").strip()),
@@ -80,7 +77,6 @@ class ClipMaker:
             ("Characters", cast),
             ("Cinematography", motion.strip()),
             ("Style", style),
-            ("Spoken", spoken),
         ]
         prompt = join_labeled(parts)
         if not max_chars or len(prompt) <= max_chars:
@@ -93,7 +89,6 @@ class ClipMaker:
             ("Characters", self.cast_in(story, scene_text, compact=True)),
             ("Cinematography", leading_sentences(motion, 2)),
             ("Style", leading_sentences(style, 2)),
-            ("Spoken", spoken),
         ]
         return fit_labeled(compact_parts, max_chars)
 
@@ -122,8 +117,16 @@ class ClipMaker:
         cfg: Dict,
         **options: Any,
     ) -> bytes:
-        """Generate once; learn and retry one provider-declared prompt ceiling."""
+        """Generate once; learn and retry one provider-declared prompt ceiling.
+
+        A native-audio scene voices its own dialogue: the spoken words go to the provider as
+        structured `dialogue`, and non-diegetic music is turned off for that clip so speech
+        stays clear (a scene without dialogue keeps music on, for score-only shots)."""
         provider, model = cfg["provider"], cfg["model"]
+        dialogue = self._spoken_line(scene)
+        if dialogue:
+            options["dialogue"] = dialogue
+            options["music"] = False
         limit = self._limit_configured(provider, _VIDEO_KIND, model)
         prompt = self.video_prompt(scene, scene.get("shot") or {}, story, motion, limit)
         try:

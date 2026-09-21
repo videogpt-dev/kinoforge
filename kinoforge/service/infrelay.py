@@ -151,8 +151,13 @@ class InfrelayClient:
         image: bytes | None = None,
         enhance: bool = False,
         enhance_style: str = "",
+        dialogue: str = "",
+        music: bool = True,
     ) -> bytes:
-        """Video (mp4) bytes from the gateway."""
+        """Video (mp4) bytes from the gateway.
+
+        A native-audio model voices `dialogue` itself; `music` toggles a non-diegetic score.
+        Both are ignored by providers that do not emit their own audio."""
         payload: Dict[str, Any] = {
             "prompt": prompt,
             "seconds": seconds,
@@ -168,6 +173,10 @@ class InfrelayClient:
             payload["enhance"] = True
             if enhance_style:
                 payload["enhance_style"] = enhance_style
+        if dialogue:
+            payload["dialogue"] = dialogue
+        if not music:
+            payload["music"] = False
         result = self._generate("video", provider, model, payload, timeout=1800)
         return self._output_bytes(result.get("output") or {})
 
