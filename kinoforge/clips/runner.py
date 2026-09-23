@@ -78,12 +78,18 @@ class ClipsRunner:
     def run(self, job: Job, ctx: Context) -> Result:
         if job.kind != self.kind:
             raise ValueError(f"ClipsRunner cannot run {job.kind}")
+        # The find stages (transcribe, duration, energy) only need the audio, so the host may
+        # send audio_path instead of the full video. Rendering still needs the video, so at
+        # least one path is required and the render stage checks for the video specifically.
         raw_video_path = job.input.get("video_path")
-        if not raw_video_path:
-            raise ValueError("clips job requires input.video_path")
+        raw_audio_path = job.input.get("audio_path")
+        if not raw_video_path and not raw_audio_path:
+            raise ValueError("clips job requires input.video_path or input.audio_path")
+        video_path = Path(raw_video_path) if raw_video_path else None
+        audio_path = Path(raw_audio_path) if raw_audio_path else None
 
         config = {**ctx.config, **job.options}
-        return self._process(Path(raw_video_path), job.job_id, config, ctx)
+        return self._process(video_path, audio_path, job.job_id, config, ctx)
 
     def _stage(self, result: Result, stage: ClipStage, status: StageStatus) -> None:
         self._report_stage(stage, status)
@@ -112,14 +118,21 @@ class ClipsRunner:
 
     def _process(
         self,
-        video_path: Path,
+        video_path: Optional[Path],
+        audio_path: Optional[Path],
         job_id: str,
         config: Dict[str, Any],
         ctx: Context,
     ) -> Result:
+        # What the find stages read: the audio when the host sent it, else the video. Rendering
+        # uses video_path directly and is guarded below.
+        media_path = audio_path or video_path
+        if media_path is None:
+            raise ValueError("clips job requires input.video_path or input.audio_path")
         result = Result(
             data={
-                "video_path": str(video_path),
+                "video_path": str(video_path) if video_path else "",
+                "audio_path": str(audio_path) if audio_path else "",
                 "clips": [],
                 "moments": [],
                 "transcript": None,
@@ -133,7 +146,7 @@ class ClipsRunner:
         try:
             if self._stop_if_cancelled(result):
                 return result
-            self._logger.info(f"Starting: {video_path.name}")
+            self._logger.info(f"Starting: {media_path.name}")
 
             if (
                 config.get("skip_already_processed")
@@ -147,7 +160,7 @@ class ClipsRunner:
                 return result
 
             duration_error = self._check_source_duration(
-                get_video_metadata(video_path).get("duration") or 0
+                get_video_metadata(media_path).get("duration") or 0
             )
             if duration_error:
                 self._logger.warning(duration_error)
@@ -176,7 +189,7 @@ class ClipsRunner:
                     )
                 else:
                     transcript = self._transcribe_video(
-                        video_path,
+                        media_path,
                         output_dir=video_out,
                         model_size=config.get("whisper_model") or None,
                         language=config.get("language") or None,
@@ -200,7 +213,15 @@ class ClipsRunner:
             discovered = False
             try:
                 moments: List[Dict[str, Any]] = []
-                if provider is not None and hasattr(provider, "discover_moments"):
+                # Source-light render hands the moments in and asks only to render them: the host
+                # already found them (on the audio) in an earlier analyze pass, so skip discovery
+                # entirely and use them as chosen.
+                preset = config.get("preset_moments")
+                if preset:
+                    moments = [dict(m) for m in preset]
+                    discovered = True
+                    self._logger.success(f"Using {len(moments)} preset moments (find skipped)")
+                elif provider is not None and hasattr(provider, "discover_moments"):
                     moments = (
                         provider.discover_moments(
                             transcript,
@@ -217,7 +238,7 @@ class ClipsRunner:
                         )
                 if not moments:
                     moments = extract_auto_moments(
-                        video_path=video_path,
+                        video_path=media_path,
                         transcript=transcript,
                         min_length=config["min_length"],
                         max_length=config["max_length"],
@@ -319,7 +340,7 @@ class ClipsRunner:
             created_ids: List[Optional[str]] = []
             try:
                 self._save_project(
-                    video_path,
+                    video_path or media_path,
                     config,
                     slug,
                     used_moments,
@@ -347,6 +368,10 @@ class ClipsRunner:
 
             self._stage(result, ClipStage.CLIPS, StageStatus.RUNNING)
             try:
+                if video_path is None:
+                    self._stage(result, ClipStage.CLIPS, StageStatus.FAILED)
+                    self._fail(result, "clip render requires input.video_path (audio-only run)")
+                    return result
                 work = video_out / "_work"
                 (work / "clips").mkdir(parents=True, exist_ok=True)
                 formatted_dir = work / "formatted"
