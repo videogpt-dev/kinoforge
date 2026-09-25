@@ -156,9 +156,15 @@ def list_segments() -> SegmentsResponse:
 )
 def execute_segment(code_name: JobKind, request: ClipsExecutionRequest) -> dict:
     _require_clips(code_name)
-    source = _shared_path(str(request.input.get("video_path") or ""), must_exist=True)
+    audio_raw = str(request.input.get("audio_path") or "")
+    video_raw = str(request.input.get("video_path") or "")
+    if not audio_raw and not video_raw:
+        raise HTTPException(status_code=400, detail="input needs audio_path or video_path")
+    if video_raw:
+        request.input["video_path"] = str(_shared_path(video_raw, must_exist=True))
+    if audio_raw:
+        request.input["audio_path"] = str(_shared_path(audio_raw, must_exist=True))
     workspace = _shared_path(request.workspace)
-    request.input["video_path"] = str(source)
     request.workspace = str(workspace)
     try:
         control = executions.begin(request.job_id)

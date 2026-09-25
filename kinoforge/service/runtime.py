@@ -38,7 +38,7 @@ class ClipsRuntime:
         *,
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
-        source = Path(str(request.input["video_path"]))
+        source = Path(str(request.input.get("video_path") or request.input.get("audio_path") or ""))
         project_id = request.project_id
         state = request.state
         store = ExecutionStore(
