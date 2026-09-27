@@ -30,7 +30,7 @@ docker run --rm -p 8100:8100 \
   kinoforge
 ```
 
-Inference runs through `INFRELAY_URL`. Set `KINOFORGE_SERVICE_TOKEN` to require a bearer token.
+Inference runs through `INFRELAY_URL`. Kinoforge runs on a trusted internal network reachable only by the caller; it has no auth of its own.
 
 ## API
 

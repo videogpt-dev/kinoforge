@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 include = ["kinoforge*"]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.6", "mypy>=1.11", "pytest>=8"]
+dev = ["ruff>=0.6", "mypy>=1.11", "pytest>=8", "pylint>=3.2"]
 
 [tool.ruff]
 line-length = 100
@@ -25,3 +25,30 @@ ignore = ["E501"]
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+# pylint runs as a size cop only (ruff owns style/imports, mypy owns types): it flags files and
+# methods that grow too big. Target ~200 lines per file; hard cap 300.
+[tool.pylint.main]
+py-version = "3.11"
+
+[tool.pylint.format]
+max-module-lines = 300
+
+[tool.pylint."messages control"]
+disable = ["all"]
+enable = [
+  "too-many-lines",        # C0302: module over max-module-lines
+  "too-many-statements",   # R0915: method body too long
+  "too-many-branches",     # R0912: method too complex
+  "too-many-nested-blocks",
+  "too-many-public-methods",  # R0904: god class by surface
+]
+
+[tool.pylint.design]
+max-statements = 50
+max-branches = 12
+max-public-methods = 20

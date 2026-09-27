@@ -19,4 +19,4 @@ RUN mkdir -p /app/output /app/.cache
 
 EXPOSE 8100
 
-CMD ["uvicorn", "kinoforge.service.app:app", "--host", "0.0.0.0", "--port", "8100"]
+CMD ["uvicorn", "kinoforge.api.app:app", "--host", "0.0.0.0", "--port", "8100"]
