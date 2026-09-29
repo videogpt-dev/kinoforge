@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kinoforge.segments.story.agent import strip_dashes
+from kinoforge.segments.story.agent import clean_text, strip_dashes
 from kinoforge.segments.story.operations import StoryOperations
 from kinoforge.segments.story.run_agent import (
     _normalize,
@@ -55,7 +55,7 @@ def test_normalize_drops_promptless_scenes_and_coerces_motion():
 # --- StoryOperations static helpers ---------------------------------------
 
 def test_clean_strips_dashes_and_whitespace():
-    assert StoryOperations._clean("  a — b ") == "a, b"
+    assert clean_text("  a — b ") == "a, b"
 
 
 def test_story_summary_lists_characters_or_none():

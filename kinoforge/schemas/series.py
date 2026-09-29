@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kinoforge.schemas.common import (
     DefinitionBundleRequest,
+    LoggableRequest,
     LogEntryResponse,
     MeterEventResponse,
 )
@@ -28,7 +29,7 @@ class SeriesContextRequest(BaseModel):
     )
 
 
-class SeriesPlanRequest(BaseModel):
+class SeriesPlanRequest(LoggableRequest):
     job_id: str = Field(description="Caller-owned operation identifier.")
     idempotency_key: str = Field(
         default="", description="Optional caller key correlating this run (and retries) in logs."

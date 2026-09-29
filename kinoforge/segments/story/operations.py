@@ -1,20 +1,33 @@
 import json
 import re
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Union
 
-from kinoforge.segments.story.agent import strip_dashes
+from kinoforge.contract import ModelRef
+from kinoforge.segments.story.agent import clean_text, strip_dashes
 from kinoforge.segments.story.formats import normalize
 from kinoforge.segments.story.languages import LANGUAGES, language_name
 from kinoforge.segments.story.ports import StoryPorts
+
+
+# suggestion kind -> (prompt key, max output tokens)
+_SUGGESTIONS = {
+    "title": ("story_suggest_title", 200),
+    "description": ("story_suggest_description", 300),
+}
 
 
 class StoryOperations:
     def __init__(self, ports: StoryPorts) -> None:
         self.ports = ports
 
-    @staticmethod
-    def _clean(value: object) -> str:
-        return strip_dashes(str(value or "")).strip()
+    def _ask_json(
+        self, purpose: str, system: str, prompt: str, route: Optional[ModelRef],
+        temperature: float, max_tokens: int,
+    ) -> Dict:
+        return self.ports.complete_json(
+            purpose, system, prompt, route=route or ModelRef(),
+            temperature=temperature, max_tokens=max_tokens,
+        )
 
     def _agent_voice(self, agent: Dict) -> str:
         persona = str(agent.get("persona") or "").strip()
@@ -47,7 +60,7 @@ class StoryOperations:
         index: int,
         agent: Dict,
         instructions: str = "",
-        pick: Optional[Dict] = None,
+        route: Optional[ModelRef] = None,
         max_tokens: int = 0,
     ) -> Dict:
         story = rec.get("story") or {}
@@ -68,21 +81,14 @@ class StoryOperations:
         if instructions.strip():
             prompt = f"{prompt}\n\nExtra direction for this rewrite:\n{instructions.strip()}"
         try:
-            data = self.ports.complete_json(
-                "story",
-                self._agent_voice(agent),
-                prompt,
-                pick=dict(pick or {}),
-                temperature=0.9,
-                max_tokens=max_tokens,
-            )
+            data = self._ask_json("story", self._agent_voice(agent), prompt, route, 0.9, max_tokens)
         except Exception as error:
             return {"ok": False, "error": str(error)}
         return {
             "ok": True,
             "scene": {
-                "prompt": self._clean(data.get("prompt") or current.get("prompt")),
-                "narration": self._clean(data.get("narration")),
+                "prompt": clean_text(data.get("prompt") or current.get("prompt")),
+                "narration": clean_text(data.get("narration")),
             },
         }
 
@@ -90,7 +96,7 @@ class StoryOperations:
         self,
         rec: Dict,
         agent: Dict,
-        pick: Optional[Dict] = None,
+        route: Optional[ModelRef] = None,
         max_tokens: int = 0,
     ) -> Dict:
         story = rec.get("story") or {}
@@ -104,20 +110,13 @@ class StoryOperations:
             scenes_text=scenes_text,
         )
         try:
-            data = self.ports.complete_json(
-                "story",
-                self._agent_voice(agent),
-                prompt,
-                pick=dict(pick or {}),
-                temperature=0.8,
-                max_tokens=max_tokens,
-            )
+            data = self._ask_json("story", self._agent_voice(agent), prompt, route, 0.8, max_tokens)
         except Exception as error:
             return {"ok": False, "error": str(error)}
         characters = [
             {
-                "name": self._clean(character.get("name")),
-                "description": self._clean(character.get("description")),
+                "name": clean_text(character.get("name")),
+                "description": clean_text(character.get("description")),
             }
             for character in data.get("characters") or []
             if isinstance(character, dict)
@@ -129,7 +128,7 @@ class StoryOperations:
         self,
         story: Dict,
         language: str,
-        pick: Optional[Dict] = None,
+        route: Optional[ModelRef] = None,
         max_tokens: int = 0,
     ) -> Dict:
         entry = LANGUAGES.get(language.strip())
@@ -147,48 +146,47 @@ class StoryOperations:
             scene_count=len(scenes),
         )
         try:
-            data = self.ports.complete_json(
-                "translate",
-                self.ports.prompt("story_system"),
-                prompt,
-                pick=dict(pick or {}),
-                temperature=0.3,
-                max_tokens=max_tokens,
+            data = self._ask_json(
+                "translate", self.ports.prompt("story_system"), prompt, route, 0.3, max_tokens
             )
         except Exception as error:
             return {"ok": False, "error": str(error)}
-        narration = data.get("narration")
-        if not isinstance(narration, list) or len(narration) != len(scenes):
-            count = len(narration) if isinstance(narration, list) else 0
-            return {
-                "ok": False,
-                "error": f"translation returned {count} narration entries; expected {len(scenes)}",
-            }
-        if any(not isinstance(line, str) for line in narration):
-            return {"ok": False, "error": "translation returned invalid narration"}
-        source_lines = [self._clean(scene.get("narration")) for scene in scenes]
-        translated_lines = [self._clean(line) for line in narration]
-        if any(source and not translated for source, translated in zip(source_lines, translated_lines)):
-            return {"ok": False, "error": "translation omitted narrated scenes"}
-        if any(source_lines) and source_lines == translated_lines:
-            return {"ok": False, "error": "translation returned original narration unchanged"}
+        translated = self._translated_lines(data.get("narration"), scenes)
+        if isinstance(translated, str):
+            return {"ok": False, "error": translated}
         return {
             "ok": True,
             "story": {
-                "logline": self._clean(data.get("logline") or story.get("logline")),
+                "logline": clean_text(data.get("logline") or story.get("logline")),
                 "style": story.get("style", ""),
                 "characters": story.get("characters") or [],
                 "scenes": [
-                    {"prompt": scene.get("prompt", ""), "narration": translated_lines[index]}
-                    for index, scene in enumerate(scenes)
+                    {"prompt": scene.get("prompt", ""), "narration": line}
+                    for scene, line in zip(scenes, translated)
                 ],
             },
         }
 
+    @staticmethod
+    def _translated_lines(narration: object, scenes: List[Dict]) -> Union[List[str], str]:
+        """The cleaned translated lines, or the reason the translation is unusable."""
+        if not isinstance(narration, list) or len(narration) != len(scenes):
+            count = len(narration) if isinstance(narration, list) else 0
+            return f"translation returned {count} narration entries; expected {len(scenes)}"
+        if any(not isinstance(line, str) for line in narration):
+            return "translation returned invalid narration"
+        source = [clean_text(scene.get("narration")) for scene in scenes]
+        translated = [clean_text(line) for line in narration]
+        if any(src and not out for src, out in zip(source, translated)):
+            return "translation omitted narrated scenes"
+        if any(source) and source == translated:
+            return "translation returned original narration unchanged"
+        return translated
+
     def direct_shots(
         self,
         rec: Dict,
-        pick: Optional[Dict] = None,
+        route: Optional[ModelRef] = None,
         max_tokens: int = 0,
     ) -> Dict:
         story = rec.get("story") or {}
@@ -208,13 +206,8 @@ class StoryOperations:
             aspect=normalize((rec.get("input") or {}).get("aspect_ratio")),
         )
         try:
-            data = self.ports.complete_json(
-                "director",
-                self.ports.prompt("story_system"),
-                prompt,
-                pick=dict(pick or {}),
-                temperature=0.7,
-                max_tokens=max_tokens,
+            data = self._ask_json(
+                "director", self.ports.prompt("story_system"), prompt, route, 0.7, max_tokens
             )
         except Exception as error:
             return {"ok": False, "error": str(error)}
@@ -257,54 +250,43 @@ class StoryOperations:
             return False
         return len(value) <= 160 if kind == "title" else len(value) >= 15
 
+    def _suggest_once(
+        self, kind: str, system: str, user: str, route: ModelRef, max_tokens: int
+    ) -> str:
+        text, _ = self.ports.complete(
+            "suggest", system, user, route=route, temperature=0.8, max_tokens=max_tokens
+        )
+        return self._clean_suggestion(text, kind == "title")
+
     def suggest_field(
         self,
         kind: str,
         title: str = "",
         description: str = "",
         idea: str = "",
-        pick: Optional[Dict] = None,
+        route: Optional[ModelRef] = None,
         fallback_model: str = "",
     ) -> Dict:
-        title, description, idea = title.strip(), description.strip(), idea.strip()
-        if kind == "title":
-            system = self.ports.prompt("story_suggest_title")
-            max_tokens = 200
-        elif kind == "description":
-            system = self.ports.prompt("story_suggest_description")
-            max_tokens = 300
-        else:
+        if kind not in _SUGGESTIONS:
             return {"ok": False, "error": "unknown suggestion kind"}
+        prompt_key, max_tokens = _SUGGESTIONS[kind]
+        system = self.ports.prompt(prompt_key)
         user = json.dumps(
-            {"title": title, "description": description, "idea": idea},
+            {"title": title.strip(), "description": description.strip(), "idea": idea.strip()},
             ensure_ascii=False,
         )
-
-        def attempt(model: str = "") -> str:
-            route = dict(pick or {})
-            if model:
-                route["model"] = model
-            text, _ = self.ports.complete(
-                "suggest",
-                system,
-                user,
-                pick=route,
-                project="",
-                temperature=0.8,
-                max_tokens=max_tokens,
-                bill=True,
-            )
-            return self._clean_suggestion(text, kind == "title")
-
+        route = route or ModelRef()
         try:
-            cleaned = attempt()
+            cleaned = self._suggest_once(kind, system, user, route, max_tokens)
         except Exception as error:
             if not fallback_model:
                 return {"ok": False, "error": str(error)}
             cleaned = ""
         if fallback_model and not self._plausible_suggestion(cleaned, kind):
             try:
-                cleaned = attempt(fallback_model)
+                cleaned = self._suggest_once(
+                    kind, system, user, route.with_overrides(model=fallback_model), max_tokens
+                )
             except Exception as error:
                 return {"ok": False, "error": str(error)}
         if not self._plausible_suggestion(cleaned, kind):

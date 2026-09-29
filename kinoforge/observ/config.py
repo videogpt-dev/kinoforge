@@ -7,11 +7,25 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from kinoforge.observ.logger import KinoLogger
+from kinoforge.observ.logger import TRACE, KinoLogger, _LEVELS
 
 _ROOT = "kinoforge"
-_MARK = {"ERROR": "x", "WARNING": "!", "SUCCESS": "+", "INFO": " ", "DEBUG": "."}
+_MARK = {"ERROR": "x", "WARNING": "!", "SUCCESS": "+", "INFO": " ", "DEBUG": ".", "TRACE": "-"}
 _configured = False
+
+
+def resolve_level(name: object, fallback: int) -> int:
+    """Level name or int to its number; unknown/None -> fallback."""
+    if isinstance(name, int):
+        return name
+    if not name:
+        return fallback
+    return _LEVELS.get(str(name).strip().lower(), fallback)
+
+
+def default_level() -> int:
+    """Default per-request console level: KINOFORGE_LOG_LEVEL, else error."""
+    return resolve_level(os.getenv("KINOFORGE_LOG_LEVEL"), _LEVELS["error"])
 
 
 class _TextFormatter(logging.Formatter):
@@ -46,17 +60,15 @@ class _JsonFormatter(logging.Formatter):
 
 
 def configure(force: bool = False) -> logging.Logger:
-    """Configure the `kinoforge` logger tree once from env, and return its root.
-
-    Env: KINOFORGE_LOG_LEVEL (default INFO), KINOFORGE_LOG_JSON (1 = JSON on console),
-    KINOFORGE_LOG_FILE (path = also append rotating JSON there)."""
+    """Set up the `kinoforge` logger tree at the TRACE floor (each KinoLogger gates its own
+    level). Env: KINOFORGE_LOG_LEVEL, KINOFORGE_LOG_JSON, KINOFORGE_LOG_FILE."""
     global _configured
     root = logging.getLogger(_ROOT)
     if _configured and not force:
         return root
 
-    root.setLevel((os.getenv("KINOFORGE_LOG_LEVEL") or "INFO").upper())
-    root.propagate = False  # our own tree, not the app root's handlers
+    root.setLevel(TRACE)  # floor; the KinoLogger decides what emits
+    root.propagate = False
     root.handlers.clear()
 
     console = logging.StreamHandler(sys.stderr)
@@ -82,9 +94,16 @@ def logger_for(segment: str = "") -> logging.Logger:
     return logging.getLogger(f"{_ROOT}.{segment or 'core'}")
 
 
-def build_logger(*, job_id: str = "", segment: str = "", idempotency_key: str = "") -> KinoLogger:
-    """A per-request KinoLogger over the shared stdlib logger, with a fresh capture buffer."""
+def build_logger(
+    *,
+    job_id: str = "",
+    segment: str = "",
+    idempotency_key: str = "",
+    level: object = None
+) -> KinoLogger:
+    """Per-request KinoLogger with a fresh capture buffer. `level` (name/int/None) sets console
+    verbosity, None -> env default; `.entries` capture is unaffected."""
     return KinoLogger(
         logger_for(segment), job_id=job_id, segment=segment, idempotency_key=idempotency_key,
-        entries=[],
+        entries=[], level=resolve_level(level, default_level()),
     )

@@ -1,11 +1,15 @@
 """Kinoforge HTTP entrypoint. Builds the FastAPI app and mounts the segment routers.
 
-Routes live in kinoforge/service/routers/{meta,clips,story,series}.py; shared-volume path
-guards in kinoforge/service/paths.py. Boot: uvicorn kinoforge.api.app:app."""
+Routes live in kinoforge/api/routers/{meta,clips,story,series}.py; shared-volume path guards
+in kinoforge/api/paths.py; incoming-request logging in kinoforge/api/observe.py. Boot:
+uvicorn kinoforge.api.app:app."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
+from kinoforge.api.observe import log_requests
 from kinoforge.api.routers import ALL as ROUTERS
+from kinoforge.service.executions import ExecutionConflict
 
 app = FastAPI(
     title="Kinoforge API",
@@ -26,6 +30,14 @@ app = FastAPI(
         {"name": "Transcription", "description": "Transcribe and align narration for captions."},
     ],
 )
+
+app.middleware("http")(log_requests)
+
+
+@app.exception_handler(ExecutionConflict)
+async def _execution_conflict(_request: Request, exc: ExecutionConflict) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
 
 for _router in ROUTERS:
     app.include_router(_router)

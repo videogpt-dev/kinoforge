@@ -37,3 +37,21 @@ Inference runs through `INFRELAY_URL`. Kinoforge runs on a trusted internal netw
 - `GET /health`, `GET /docs`, `GET /redoc`, `GET /openapi.json`
 - `GET /v1/segments` lists the segments (clips, story, series) with their labels and status.
 - `POST /v1/segments/{code_name}/execute` runs one.
+
+## Clips request
+
+A clips request splits into `options` (user choices: `clip_count`, `min_length`, `max_length`,
+`formats`, `quality`, `generate_captions`, `min_interest_score`, `whisper_model`, `language`)
+and `config` (resolved engine settings: `transcription`, `scoring`, `rendering`, `limits`,
+`context_window`, `moment_finder`, `moment_route`). The engine merges them as
+`{**config, **options}`, so a key belongs to one side only.
+
+Moment finding is config-only:
+
+- `moment_finder`: `auto` (AI if a route is set, else offline), `ai`, or `offline`.
+- `moment_route`: `{"provider", "model"}` for AI finding.
+
+`ai` without a route warns and falls back to offline.
+
+`log_level` on the request sets that run's console verbosity; unset uses `KINOFORGE_LOG_LEVEL`
+(default `error`). Returned `logs` are complete regardless.

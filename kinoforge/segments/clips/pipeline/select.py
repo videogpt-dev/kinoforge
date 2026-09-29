@@ -1,56 +1,28 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from kinoforge.contract import Context
-from kinoforge.segments.clips.moments import MomentExtractor, score_and_rank_moments
+from kinoforge.segments.clips.moments import HeuristicScorer, MomentExtractor
+from kinoforge.segments.clips.moments.moment import Moment
 from kinoforge.segments.clips.pipeline.context import (
+    ClipRun,
     ClipStage,
     SaveProject,
     StageCtx,
     StageStatus,
 )
 
+Moments = List[Dict[str, Any]]
 
-def find_moments(
-    sc: StageCtx,
-    provider: object,
-    transcript: List[Dict[str, Any]],
-    media_path: Path,
-    config: Dict[str, Any],
-) -> Optional[tuple[List[Dict[str, Any]], bool]]:
-    """Returns (moments, discovered), or None when the run must stop."""
+
+def find_moments(run: ClipRun, provider: Any) -> Optional[Tuple[Moments, bool]]:
+    """(moments, discovered): preset moments, else the provider's own discovery, else the
+    offline extractor. None when the run must stop."""
+    sc = run.sc
     sc.stage(ClipStage.MOMENTS, StageStatus.RUNNING)
     sc.logger.info("Finding moments")
-    discovered = False
     try:
-        moments: List[Dict[str, Any]] = []
-        # Source-light render hands the moments in and asks only to render them: the host already
-        # found them (on the audio) in an earlier analyze pass, so skip discovery and use them.
-        preset = config.get("preset_moments")
-        if preset:
-            moments = [dict(m) for m in preset]
-            discovered = True
-            sc.logger.success(f"Using {len(moments)} preset moments (find skipped)")
-        elif provider is not None and hasattr(provider, "discover_moments"):
-            moments = (
-                provider.discover_moments(
-                    transcript, config["min_length"], config["max_length"], config["clip_count"]
-                )
-                or []
-            )
-            discovered = bool(moments)
-            if discovered:
-                sc.logger.success(f"Read the transcript and chose {len(moments)} moments")
-        if not moments:
-            moments = MomentExtractor(
-                min_length=config["min_length"],
-                max_length=config["max_length"],
-                target_clips=config["clip_count"],
-                verbose=config["verbose"],
-            ).auto(media_path, transcript)
-            sc.logger.success(f"Moment extraction: {len(moments)} moments found")
+        moments, discovered = _preset(run) or _discovered(run, provider) or (_extracted(run), False)
         sc.result.data["moments"] = moments
         if sc.stopped(ClipStage.MOMENTS):
             return None
@@ -62,34 +34,59 @@ def find_moments(
         return None
 
 
-def rank_moments(
-    sc: StageCtx,
-    provider: object,
-    moments: List[Dict[str, Any]],
-    discovered: bool,
-    transcript: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    if discovered:
-        return sorted(moments, key=lambda moment: float(moment.get("score") or 0), reverse=True)
+def _preset(run: ClipRun) -> Optional[Tuple[Moments, bool]]:
+    """Source-light render: the host already found these (on the audio) in an analyze pass."""
+    preset = run.config.get("preset_moments")
+    if not preset:
+        return None
+    run.sc.logger.success(f"Using {len(preset)} preset moments (find skipped)")
+    return [dict(m) for m in preset], True
 
-    if provider and hasattr(provider, "filter_moments"):
+
+def _discovered(run: ClipRun, provider: Any) -> Optional[Tuple[Moments, bool]]:
+    if not hasattr(provider, "discover_moments"):
+        return None
+    config = run.config
+    moments = provider.discover_moments(
+        run.transcript, config["min_length"], config["max_length"], config["clip_count"]
+    ) or []
+    if not moments:
+        return None
+    run.sc.logger.success(f"Read the transcript and chose {len(moments)} moments")
+    return moments, True
+
+
+def _extracted(run: ClipRun) -> Moments:
+    config = run.config
+    moments = MomentExtractor(
+        min_length=config["min_length"], max_length=config["max_length"],
+        target_clips=config["clip_count"], verbose=config["verbose"],
+    ).auto(run.media_path, run.transcript)
+    run.sc.logger.success(f"Moment extraction: {len(moments)} moments found")
+    return moments
+
+
+def rank_moments(run: ClipRun, provider: Any, moments: Moments, discovered: bool) -> Moments:
+    """Discovered moments come scored; others are filtered + scored by the provider when it
+    can, else by the offline scorer."""
+    if discovered:
+        return sorted(moments, key=lambda moment: Moment(moment).score, reverse=True)
+    sc, name = run.sc, getattr(provider, "name", "provider")
+    if hasattr(provider, "filter_moments"):
         try:
-            filtered = provider.filter_moments(moments, transcript)
+            filtered = provider.filter_moments(moments, run.transcript)
             if filtered:
                 moments = filtered
-                sc.logger.success(
-                    f"Filtered moments using {getattr(provider, 'name', 'provider')}"
-                )
+                sc.logger.success(f"Filtered moments using {name}")
         except Exception as exc:
             sc.logger.warning(f"Provider filtering failed: {exc}")
-
     sc.logger.info("Scoring moments")
     try:
-        if provider and hasattr(provider, "score_moments"):
-            moments = provider.score_moments(moments, transcript)
-            sc.logger.success(f"Scored moments with {getattr(provider, 'name', 'provider')}")
+        if hasattr(provider, "score_moments"):
+            moments = provider.score_moments(moments, run.transcript)
+            sc.logger.success(f"Scored moments with {name}")
         else:
-            moments = score_and_rank_moments(moments, transcript)
+            moments = HeuristicScorer.rank(moments)
             sc.logger.success("Moments scored and ranked")
     except Exception as exc:
         sc.logger.warning(f"Moment scoring failed: {exc}")
@@ -99,55 +96,65 @@ def rank_moments(
 def apply_limits(
     sc: StageCtx, ranked: List[Dict[str, Any]], config: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
-    threshold = config.get("min_interest_score") or 0.0
-    if threshold > 0 and ranked:
-        scores = [float(moment.get("score") or 0) for moment in ranked]
-        scale = 100.0 if max(scores) > 10 else 10.0
-        kept = [m for m in ranked if (float(m.get("score") or 0) / scale) >= threshold]
-        if not kept:
-            sc.logger.warning(f"No moments scored ≥ {threshold:.2f}; using top results instead.")
-        else:
-            ranked = kept
-            sc.logger.info(f"Kept {len(kept)}/{len(scores)} moments scoring ≥ {threshold:.2f}.")
+    ranked = _apply_threshold(sc, ranked, config)
+    return _apply_lengths(sc, ranked, config)
 
-    min_len = float(config.get("min_length") or 0)
+
+def _apply_threshold(
+    sc: StageCtx, ranked: List[Dict[str, Any]], config: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    threshold = config.get("min_interest_score") or 0.0
+    if threshold <= 0 or not ranked:
+        return ranked
+    scale = Moment.score_scale(ranked)
+    kept = [m for m in ranked if Moment(m).score / scale >= threshold]
+    target = int(config.get("clip_count") or 0)
+    # Trim to above-threshold only when that already meets the count; else keep the full
+    # ordered list so the runner's clip_count slice is not starved.
+    if len(kept) >= max(target, 1):
+        sc.logger.info(f"Kept {len(kept)}/{len(ranked)} moments scoring ≥ {threshold:.2f}.")
+        return kept
+    if kept:
+        sc.logger.info(
+            f"Only {len(kept)}/{len(ranked)} scored ≥ {threshold:.2f}; keeping the top "
+            f"{min(target or len(ranked), len(ranked))} so the requested count is met."
+        )
+    else:
+        sc.logger.warning(f"No moments scored ≥ {threshold:.2f}; using top results instead.")
+    return ranked
+
+
+def _apply_lengths(
+    sc: StageCtx, ranked: List[Dict[str, Any]], config: Dict[str, Any]
+) -> List[Dict[str, Any]]:
     max_len = float(config.get("max_length") or 0)
     for moment in ranked:
-        if max_len and float(moment.get("end") or 0) - float(moment.get("start") or 0) > max_len:
-            moment["end"] = float(moment["start"]) + max_len
-            moment["duration"] = max_len
-    if min_len:
-        usable = [
-            m for m in ranked if float(m.get("end") or 0) - float(m.get("start") or 0) >= min_len
-        ]
-        if usable:
-            ranked = usable
-        else:
-            sc.logger.warning(f"Every moment is shorter than {min_len:.0f}s; keeping them anyway.")
+        Moment(moment).clamp_to(max_len)
+    min_len = float(config.get("min_length") or 0)
+    if not min_len:
+        return ranked
+    usable = [m for m in ranked if Moment(m).span >= min_len]
+    if usable:
+        return usable
+    sc.logger.warning(f"Every moment is shorter than {min_len:.0f}s; keeping them anyway.")
     return ranked
 
 
 def persist_moments(
-    sc: StageCtx,
-    save_project: SaveProject,
-    source_path: Path,
-    slug: str,
-    used_moments: List[Dict[str, Any]],
-    transcript: List[Dict[str, Any]],
-    job_id: str,
-    config: Dict[str, Any],
-    ctx: Context,
+    run: ClipRun, save_project: SaveProject, used: Moments
 ) -> List[Optional[str]]:
-    created_ids: List[Optional[str]] = []
+    """Write project.json and add the chosen moments to the clip pool; the new clip ids."""
+    sc, store = run.sc, run.ctx.store
     try:
-        save_project(source_path, config, slug, used_moments, transcript, ctx.store)
+        save_project(run.video_path or run.media_path, run.config, run.slug, used,
+                     run.transcript, store)
         sc.logger.success("Saved project.json (editor source of truth)")
-        project = ctx.store.load_record(job_id)
-        if project is not None:
-            created_ids = ctx.store.append_clips(job_id, project, used_moments)
-            sc.logger.success(
-                f"Added {sum(1 for clip_id in created_ids if clip_id)} clips to the pool"
-            )
+        project = store.load_record(run.job_id)
+        if project is None:
+            return []
+        created_ids = store.append_clips(run.job_id, project, used)
+        sc.logger.success(f"Added {sum(1 for c in created_ids if c)} clips to the pool")
+        return created_ids
     except Exception as exc:
         sc.logger.warning(f"Could not write project/clips: {exc}")
-    return created_ids
+        return []

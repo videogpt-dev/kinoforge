@@ -1,332 +1,152 @@
-"""Format clips to platform aspect ratios, letterbox or blurred pad, optional burned captions."""
+"""Format clips to platform aspect ratios: letterbox or blurred pad (never crop), optional
+burned captions, optional mute, NVENC with a libx264 fallback."""
 
-import json
-import subprocess
-from concurrent.futures import ThreadPoolExecutor
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from kinoforge.contract import Meter, MeterAction
 from kinoforge.observ import active
+from kinoforge.segments.clips.moments.moment import Moment
+from kinoforge.segments.clips.render import ffmpeg
+from kinoforge.segments.clips.render.captions import AssCaptions, CaptionWindow
+from kinoforge.segments.clips.render.media import AspectRatio, FillStyle
+from kinoforge.segments.clips.render.parallel import ordered_map
+from kinoforge.segments.clips.render.probe import get_video_metadata
+
+_AUDIO = ["-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
 
 
-def _encode_args(use_gpu: bool) -> List[str]:
-    """ffmpeg video-encode args: NVENC when GPU is requested, else libx264."""
-    if use_gpu:
-        return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23"]
-    return ["-c:v", "libx264", "-preset", "medium", "-crf", "23"]
+def _scale(width: int, height: int) -> str:
+    return f"scale={width}:{height},{ffmpeg.GRADE}"
 
 
-def _ass_timestamp(seconds: float) -> str:
-    """ASS timestamp: H:MM:SS.cc (centiseconds)."""
-    seconds = max(0.0, seconds)
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    centis = int((seconds % 1) * 100)
-    return f"{hours:d}:{minutes:02d}:{secs:02d}.{centis:02d}"
+def _letterbox(width: int, height: int) -> str:
+    return (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,{ffmpeg.GRADE}")
 
 
-def _ass_escape(text: str) -> str:
-    """Escape caption text for an ASS Dialogue line."""
-    return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", "\\N")
+def _blurred_pad(width: int, height: int) -> str:
+    """Fit over a blurred copy of itself. `split` keeps it a single-input graph -vf accepts."""
+    return (f"split=2[main][blur];[blur]scale={width}:{height},boxblur=20:1[bg];"
+            f"[main]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{ffmpeg.GRADE}")
 
 
-def _chunk_caption(text: str, max_chars: int = 42) -> List[str]:
-    """Break caption text into <= max_chars chunks on word boundaries (about two lines)."""
-    words = text.split()
-    chunks: List[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if current and len(candidate) > max_chars:
-            chunks.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    return chunks or [text]
+def fit_filter(size: Tuple[int, int], source_ar: float, fill: Optional[FillStyle]) -> str:
+    """A forced fill wins; else same shape scales, wider letterboxes, taller gets a blur pad."""
+    width, height = size
+    if fill is FillStyle.BLUR:
+        return _blurred_pad(width, height)
+    if fill is FillStyle.BARS:
+        return _letterbox(width, height)
+    target_ar = width / height
+    if abs(source_ar - target_ar) < 0.01:
+        return _scale(width, height)
+    return _letterbox(width, height) if source_ar > target_ar else _blurred_pad(width, height)
 
 
-def _write_window_ass(
-    transcript: List[Dict], start: float, end: float, ass_path: Path, width: int, height: int
-) -> bool:
-    """Write a clip-relative ASS for transcript segments overlapping [start, end].
+@dataclass(frozen=True)
+class ClipFormatter:
+    """Formats one clip to one aspect ratio."""
 
-    PlayResX/Y are pinned to the output dimensions so Fontsize is real pixels (an SRT
-    with force_style scales against libass' 288px default, blowing captions up ~6x).
-    Font size, margins and outline scale with height; captions sit bottom-centre.
-    Returns False when the window has no caption text."""
-    font_size = max(24, round(height * 0.040))
-    outline = max(2, round(height * 0.003))
-    margin_v = round(height * 0.10)
-    margin_h = round(width * 0.07)
-    events: List[str] = []
-    for seg in transcript or []:
-        s, e = float(seg.get("start", 0) or 0), float(seg.get("end", 0) or 0)
-        if e <= start or s >= end:
-            continue
-        text = (seg.get("text") or "").strip()
-        if not text:
-            continue
-        rel_start = max(0.0, s - start)
-        rel_end = max(rel_start + 0.1, min(e, end) - start)
-        # Split a long segment into short chunks (~2 lines) so captions never blanket the
-        # frame; each chunk gets a time slice proportional to its length.
-        chunks = _chunk_caption(text)
-        total = sum(len(c) for c in chunks) or 1
-        cursor = rel_start
-        for chunk in chunks:
-            span = (rel_end - rel_start) * (len(chunk) / total)
-            c_end = min(rel_end, cursor + max(0.4, span))
-            events.append(
-                f"Dialogue: 0,{_ass_timestamp(cursor)},{_ass_timestamp(c_end)},"
-                f"Default,,0,0,0,,{_ass_escape(chunk)}"
-            )
-            cursor = c_end
-    if not events:
+    mute: bool = False
+    use_gpu: bool = False
+    fill: Optional[FillStyle] = None
+
+    def format(
+        self, source: Path, output: Path, aspect: str, source_ar: float,
+        captions: Optional[CaptionWindow] = None,
+    ) -> bool:
+        size = AspectRatio(aspect).size
+        video_filter = fit_filter(size, source_ar, self.fill)
+        if captions is not None:
+            ass_path = output.with_suffix(".ass")
+            if AssCaptions(*size).write(captions, ass_path):
+                # ':' and "'" are filtergraph separators inside the ass filter argument.
+                escaped = (str(ass_path).replace("\\", "\\\\").replace(":", "\\:")
+                           .replace("'", "\\'"))
+                video_filter = f"{video_filter},ass='{escaped}'"
+        return self._encode(source, output, video_filter)
+
+    def _encode(self, source: Path, output: Path, video_filter: str) -> bool:
+        audio = ["-an"] if self.mute else _AUDIO
+        attempts = [True, False] if self.use_gpu else [False]
+        for gpu in attempts:
+            try:
+                ffmpeg.run(["-i", str(source), "-vf", video_filter, *ffmpeg.encode_args(gpu),
+                            *audio, str(output)], timeout=300)
+                return output.exists()
+            except ffmpeg.FfmpegError as exc:
+                if gpu:
+                    active().warning("      GPU encode failed, falling back to libx264")
+                else:
+                    active().error(f"      ffmpeg: {exc}")
         return False
-    header = (
-        "[Script Info]\n"
-        "ScriptType: v4.00+\n"
-        f"PlayResX: {width}\n"
-        f"PlayResY: {height}\n"
-        "WrapStyle: 0\n"
-        "ScaledBorderAndShadow: yes\n\n"
-        "[V4+ Styles]\n"
-        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
-        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
-        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,Arial,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,"
-        f"-1,0,0,0,100,100,0,0,1,{outline},1,2,{margin_h},{margin_h},{margin_v},1\n\n"
-        "[Events]\n"
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-    )
-    ass_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
-    return True
 
 
-def format_clips_multi_platform(
-    clip_paths: List[Path],
-    moments: List[Dict],
-    output_dir: Path,
-    formats: List[str] | None = None,
-    transcript: Optional[List[Dict]] = None,
-    *,
-    rendering: Dict[str, Any],
-    processing: Dict[str, Any],
-    meter: Optional[Meter] = None) -> Dict[str, List[Path]]:
-    """Format clips for multiple platforms with different aspect ratios.
+class VariantFormatter:
+    """Formats every raw clip into every requested aspect ratio (parallel across clips), then
+    meters captions and the extra encodes beyond the first format."""
 
-    Honours the injected render/processing settings: burn_subtitles +
-    subtitle_font_size (burn the transcript window as captions), mute_output (drop
-    audio), use_gpu (NVENC), max_workers (parallel clips).
-    """
-    if formats is None:
-        formats = ["9:16", "16:9"]
+    def __init__(
+        self,
+        formats: Sequence[str],
+        transcript: Optional[List[Dict[str, Any]]],
+        *,
+        rendering: Dict[str, Any],
+        processing: Dict[str, Any],
+        meter: Optional[Meter] = None,
+    ) -> None:
+        self._formats = [AspectRatio(f) for f in formats]
+        self._burn = bool(rendering["burn_subtitles"]) and bool(transcript)
+        self._transcript = transcript or []
+        self._formatter = ClipFormatter(
+            mute=bool(rendering["mute_output"]), use_gpu=bool(processing["use_gpu"])
+        )
+        self._workers = int(processing["max_workers"])
+        self._meter = meter
 
-    burn = rendering["burn_subtitles"]
-    mute = rendering["mute_output"]
-    use_gpu = processing["use_gpu"]
-    max_workers = processing["max_workers"]
+    def format_all(
+        self, clip_paths: List[Path], moments: List[Dict[str, Any]], output_dir: Path
+    ) -> Dict[str, List[Path]]:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        items = [(i, clip, moment, output_dir)
+                 for i, (clip, moment) in enumerate(zip(clip_paths, moments), 1)]
+        batches = ordered_map(self._format_one, items, self._workers)
+        formatted: Dict[str, List[Path]] = {str(f): [] for f in self._formats}
+        for produced in batches:
+            for aspect, path, ok in produced:
+                if ok:
+                    formatted[str(aspect)].append(path)
+        self._bill(batches, formatted, len(clip_paths))
+        return formatted
 
-    formatted_clips: Dict[str, List] = {fmt: [] for fmt in formats}
-
-    def process_one(i: int, clip_path: Path, moment: Dict) -> List[tuple]:
-        active().info(f"\n  Processing clip {i}/{len(clip_paths)}...")
-        video_info = get_video_metadata(clip_path)
-
+    def _format_one(
+        self, index: int, clip: Path, moment: Dict[str, Any], output_dir: Path
+    ) -> List[Tuple[AspectRatio, Path, bool]]:
+        active().info(f"  Processing clip {index}...")
+        source_ar = get_video_metadata(clip)["aspect_ratio"]
+        view = Moment(moment)
+        captions = (CaptionWindow(self._transcript, view.start, view.end)
+                    if self._burn else None)
         produced = []
-        for aspect_ratio in formats:
-            output_name = f"clip_{i:02d}_{aspect_ratio.replace(':', 'x')}.mp4"
-            output_path = output_dir / output_name
-            ok = apply_format_with_aspect_ratio(
-                clip_path, output_path, aspect_ratio, video_info, moment,
-                transcript=transcript if burn else None, mute=mute, use_gpu=use_gpu)
-            active().warning(f"    {'ok' if ok else 'failed'} {aspect_ratio}: {output_name}")
-            produced.append((aspect_ratio, output_path, ok))
+        for aspect in self._formats:
+            output = output_dir / f"clip_{index:02d}_{aspect.slug}.mp4"
+            ok = self._formatter.format(clip, output, aspect, source_ar, captions)
+            active().info(f"    {'ok' if ok else 'failed'} {aspect}: {output.name}")
+            produced.append((aspect, output, ok))
         return produced
 
-    pairs = list(enumerate(zip(clip_paths, moments), 1))
-    if max_workers > 1 and len(pairs) > 1:
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            batches = list(pool.map(lambda p: process_one(p[0], p[1][0], p[1][1]), pairs))
-    else:
-        batches = [process_one(i, cp, m) for i, (cp, m) in pairs]
-
-    captioned = 0
-    for produced in batches:
-        for aspect_ratio, output_path, ok in produced:
-            if ok:
-                formatted_clips[aspect_ratio].append(output_path)
-        if burn and transcript and any(ok for _, _, ok in produced):
-            captioned += 1
-
-    # Billed on what was produced. Every clip is rendered in one format as part of the
-    # export; each additional aspect ratio is a second encode, so it is its own line.
-    rendered = sum(len(paths) for paths in formatted_clips.values())
-    if meter:
-        meter(MeterAction.CLIP_CAPTIONS, captioned)
-        meter(MeterAction.CLIP_VARIANT, max(0, rendered - len(clip_paths)))
-
-    return formatted_clips
-
-
-def get_video_metadata(video_path: Path) -> Dict:
-    """Width, height, duration, aspect ratio and fps from ffprobe. Falls back to 1080p/30 on error."""
-    cmd = [
-        'ffprobe',
-        '-v', 'quiet',
-        '-print_format', 'json',
-        '-show_format',
-        '-show_streams',
-        str(video_path)
-    ]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, check=True, timeout=30)
-        data = json.loads(result.stdout)
-
-        video_stream: Dict[str, Any] = next(
-            (s for s in data.get('streams', []) if s['codec_type'] == 'video'),
-            {}
-        )
-
-        fps = 30.0
-        fps_str = video_stream.get('r_frame_rate', '30/1')
-        if fps_str and '/' in fps_str:
-            try:
-                num, den = fps_str.split('/')
-                if float(den) != 0:
-                    fps = float(num) / float(den)
-            except (ValueError, ZeroDivisionError):
-                fps = 30
-        elif fps_str:
-            try:
-                fps = float(fps_str)
-            except ValueError:
-                fps = 30
-
-        return {
-            'width': video_stream.get('width', 1920),
-            'height': video_stream.get('height', 1080),
-            'duration': float(data.get('format', {}).get('duration', 0)),
-            'aspect_ratio': int(video_stream.get('width', 16)) / max(int(video_stream.get('height', 9)), 1),
-            'fps': fps
-        }
-    except Exception as e:
-        active().warning(f"    Warning: Could not get video info: {e}")
-        return {
-            'width': 1920,
-            'height': 1080,
-            'duration': 0,
-            'aspect_ratio': 16/9,
-            'fps': 30
-        }
-
-
-def apply_format_with_aspect_ratio(
-    input_path: Path,
-    output_path: Path,
-    aspect_ratio: str,
-    video_info: Dict,
-    moment: Dict,
-    transcript: Optional[List[Dict]] = None,
-    mute: bool = False,
-    use_gpu: bool = False,
-    fill: Optional[str] = None) -> bool:
-    """Format a clip to an aspect ratio (letterbox/pad, never crop). When a transcript is
-    given the moment window is burned in as captions sized to the output; mute drops
-    audio; use_gpu encodes via NVENC. `fill` forces the fit style regardless of source
-    orientation: "blur" (blurred background) or "bars" (solid black letterbox); the
-    default picks per source."""
-    dimensions = {
-        "9:16": (1080, 1920),
-        "16:9": (1920, 1080),
-        "1:1": (1080, 1080),
-        "4:5": (1080, 1350)
-    }
-
-    target_width, target_height = dimensions[aspect_ratio]
-    source_ar = video_info['aspect_ratio']
-    target_ar = target_width / target_height
-
-    if fill == "blur":
-        video_filter = build_pad_filter_clean(target_width, target_height, aspect_ratio, video_info)
-    elif fill == "bars":
-        video_filter = build_letterbox_filter(target_width, target_height, aspect_ratio, video_info)
-    elif abs(source_ar - target_ar) < 0.01:
-        video_filter = build_scale_filter_clean(target_width, target_height, aspect_ratio)
-    elif source_ar > target_ar:
-        # Wider than target: letterbox, never crop.
-        video_filter = build_letterbox_filter(target_width, target_height, aspect_ratio, video_info)
-    else:
-        # Taller than target: pad with a blurred background.
-        video_filter = build_pad_filter_clean(target_width, target_height, aspect_ratio, video_info)
-
-    if transcript:
-        ass_path = output_path.with_suffix(".ass")
-        if _write_window_ass(
-            transcript, moment.get("start", 0), moment.get("end", 0),
-            ass_path, target_width, target_height):
-            # Escape for the ass filter (':' and "'" are filtergraph separators).
-            esc = str(ass_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-            video_filter = f"{video_filter},ass='{esc}'"
-
-    audio_args = ["-an"] if mute else [
-        "-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-    ]
-
-    def _run(gpu: bool) -> bool:
-        cmd = ["ffmpeg", "-y", "-i", str(input_path), "-vf", video_filter]
-        cmd += _encode_args(gpu) + audio_args + [str(output_path)]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=300)
-        return output_path.exists()
-
-    try:
-        return _run(use_gpu)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as first:
-        # Bound here, not only in the fallback below: a CPU-path failure used to reach
-        # the stderr print with `e` unbound, raising NameError over the real ffmpeg error.
-        e: Exception = first
-        if use_gpu:
-            # NVENC unavailable (e.g. no GPU): fall back to libx264.
-            active().warning("      GPU encode failed, falling back to libx264")
-            try:
-                return _run(False)
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e2:
-                e = e2
-        if hasattr(e, 'stderr') and e.stderr:
-            active().error(f"      Error: {e.stderr.decode()[:200]}")
-        return False
-
-
-def build_scale_filter_clean(width: int, height: int, aspect_ratio: str) -> str:
-    return (
-        f"scale={width}:{height},"
-        f"eq=contrast=1.05:saturation=1.08"
-    )
-
-
-def build_letterbox_filter(width: int, height: int, aspect_ratio: str, video_info: Dict) -> str:
-    return (
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-        f"eq=contrast=1.05:saturation=1.08"
-    )
-
-
-def build_pad_filter_clean(width: int, height: int, aspect_ratio: str, video_info: Dict) -> str:
-    """Scale to fit over a blurred copy of itself, no crop.
-
-    A single-input simple filtergraph: `split` the source into a scaled-to-fit
-    foreground and a blurred fill, then overlay. (Referencing `[0:v]` twice would
-    make it a complex graph that -vf rejects, split keeps it -vf compatible.)"""
-    return (
-        f"split=2[main][blur];"
-        f"[blur]scale={width}:{height},boxblur=20:1[bg];"
-        f"[main]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
-        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,"
-        f"eq=contrast=1.05:saturation=1.08"
-    )
+    def _bill(self, batches: List[List[Tuple]], formatted: Dict[str, List[Path]],
+              clips: int) -> None:
+        # Every clip is rendered in one format as part of the export; each additional aspect
+        # ratio is a second encode and its own line.
+        if not self._meter:
+            return
+        captioned = sum(1 for produced in batches if self._burn and any(ok for *_, ok in produced))
+        rendered = sum(len(paths) for paths in formatted.values())
+        self._meter(MeterAction.CLIP_CAPTIONS, captioned)
+        self._meter(MeterAction.CLIP_VARIANT, max(0, rendered - clips))

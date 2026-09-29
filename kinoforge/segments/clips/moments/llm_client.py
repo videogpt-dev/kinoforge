@@ -33,8 +33,10 @@ class LlmClient:
         except Exception:
             tqdm = None
 
+        from kinoforge.observ import with_context  # carry the bound logger into workers
+
         with ThreadPoolExecutor(max_workers=self._max_workers) as ex:
-            future_to_idx = {ex.submit(fn, item): i for i, item in enumerate(items)}
+            future_to_idx = {ex.submit(with_context(fn), item): i for i, item in enumerate(items)}
             completed = as_completed(future_to_idx)
             if tqdm is not None:
                 completed = tqdm(

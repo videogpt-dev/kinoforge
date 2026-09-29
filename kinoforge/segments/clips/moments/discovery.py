@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
+from kinoforge.contract import ModelRef
+from kinoforge.segments.clips.moments.extractor import TranscriptText
+from kinoforge.segments.clips.moments.moment import Moment
 from kinoforge.segments.clips.moments.llm_client import LlmClient
 from kinoforge.observ import active, logged
 
@@ -12,18 +15,12 @@ _MIN_BUDGET_CHARS = 4000
 
 class MomentDiscoverer:
     """Transcript-first discovery: read the transcript (chunked when long) and pick
-    self-contained moments with real start/end, snapped to segment edges.
+    self-contained moments snapped to segment edges. Capped to the context window
+    (context_window tokens, default 1M); an over-long transcript is tail-truncated."""
 
-    The transcript is capped to the model's context window (context_window tokens, default
-    1M): it fits in a single pass in the common case, and an over-long transcript has its
-    tail truncated rather than overflowing the window or fanning out into many requests."""
-
-    def __init__(
-        self, llm: LlmClient, provider: str, name: str, *, context_window: int = 1_000_000
-    ) -> None:
+    def __init__(self, llm: LlmClient, route: ModelRef, *, context_window: int = 1_000_000) -> None:
         self._llm = llm
-        self.provider = provider
-        self.name = name
+        self._route = route
         usable = max(int(context_window) - _RESERVE_TOKENS, 0)
         self._budget_chars = max(usable * _CHARS_PER_TOKEN, _MIN_BUDGET_CHARS)
 
@@ -38,9 +35,7 @@ class MomentDiscoverer:
             return []
         segs = self._fit_budget(segs)
 
-        from kinoforge.segments.clips.moments.extractor import TranscriptText
-
-        active().info(f"  Reading the full transcript to find moments ({self.name})...")
+        active().info(f"  Reading the full transcript to find moments ({self._route})...")
         chunks = self._chunk_transcript(segs)
         want = max(target_clips, 5)
         raw_lists = self._llm.parallel_map(
@@ -48,27 +43,10 @@ class MomentDiscoverer:
         )
         raw = [m for lst in raw_lists if lst for m in lst]
 
-        moments: List[Dict] = []
-        for r in raw:
-            try:
-                rs, re_ = float(r["start"]), float(r["end"])
-            except (KeyError, ValueError, TypeError):
-                continue
-            if re_ <= rs:
-                continue
-            s, e, text = TranscriptText.snap(segs, rs, re_, min_len, max_len)
-            if e - s < 2.0:
-                continue
-            moments.append({
-                "start": s, "end": e, "duration": e - s, "text": text,
-                "score": min(max(float(r.get("score") or 60), 0), 100),
-                "ai_reason": str(r.get("reason", ""))[:200],
-                "ai_hook": str(r.get("hook", ""))[:120],
-                "title": str(r.get("title", ""))[:120],
-                "language": TranscriptText.detect_language(text),
-                "ai_scored": True, "provider": self.provider,
-                "source": "transcript_discovery",
-            })
+        moments = [
+            moment for moment in (self._to_moment(r, segs, min_len, max_len) for r in raw)
+            if moment is not None
+        ]
 
         deduped = self._dedupe_overlaps(moments)
         active().success(f"  Chose {len(deduped)} moments from the full transcript "
@@ -76,8 +54,7 @@ class MomentDiscoverer:
         return deduped
 
     def _fit_budget(self, segs: List[Dict]) -> List[Dict]:
-        """Cap the transcript to the context-window budget, dropping the tail when it overflows.
-        Keeps the whole clip in one pass in the common case (a 1M window holds hours of speech)."""
+        """Cap the transcript to the context-window budget, dropping the tail on overflow."""
         kept: List[Dict] = []
         size = 0
         for s in segs:
@@ -129,21 +106,35 @@ class MomentDiscoverer:
         parsed = self._llm.parse_json_array(content)
         return [p for p in parsed if isinstance(p, dict)] if parsed else []
 
+    def _to_moment(
+        self, pick: Dict, segs: List[Dict], min_len: float, max_len: float
+    ) -> Optional[Dict]:
+        """One model pick snapped to segment edges and sized into [min_len, max_len], or None
+        when it has no usable span."""
+        try:
+            start, end = float(pick["start"]), float(pick["end"])
+        except (KeyError, ValueError, TypeError):
+            return None
+        if end <= start:
+            return None
+        s, e, text = TranscriptText.snap(segs, start, end, min_len, max_len)
+        if e - s < 2.0:
+            return None
+        return Moment.new(
+            s, e, text=text,
+            score=min(max(float(pick.get("score") or 60), 0), 100),
+            ai_reason=str(pick.get("reason", ""))[:200],
+            ai_hook=str(pick.get("hook", ""))[:120],
+            title=str(pick.get("title", ""))[:120],
+            language=TranscriptText.detect_language(text),
+            ai_scored=True, provider=self._route.provider, source="transcript_discovery",
+        )
+
     @staticmethod
     def _dedupe_overlaps(moments: List[Dict]) -> List[Dict]:
         """Keep the highest-scoring moment out of any overlapping set. Greedy, best first."""
-        ordered = sorted(moments, key=lambda m: float(m.get("score") or 0), reverse=True)
-        kept: List[Dict] = []
-        for m in ordered:
-            ms, me = float(m["start"]), float(m["end"])
-            clash = False
-            for k in kept:
-                ks, ke = float(k["start"]), float(k["end"])
-                overlap = max(0.0, min(me, ke) - max(ms, ks))
-                shorter = min(me - ms, ke - ks) or 1.0
-                if overlap / shorter > 0.5:
-                    clash = True
-                    break
-            if not clash:
-                kept.append(m)
-        return kept
+        kept: List[Moment] = []
+        for moment in sorted((Moment(m) for m in moments), key=lambda m: m.score, reverse=True):
+            if all(moment.overlap_ratio(k) <= 0.5 for k in kept):
+                kept.append(moment)
+        return [m.data for m in kept]

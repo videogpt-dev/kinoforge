@@ -3,34 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Protocol, Tuple
 
-from kinoforge.contract import Meter, _no_meter
+from kinoforge.contract import Meter, ModelRef, _no_meter
 
 
 class Complete(Protocol):
     def __call__(
-        self,
-        purpose: str,
-        system: str,
-        user: str,
-        *,
-        pick: Dict,
-        project: str,
-        temperature: float,
-        max_tokens: int,
-        bill: bool,
+        self, purpose: str, system: str, user: str, *,
+        route: ModelRef, temperature: float, max_tokens: int,
     ) -> Tuple[str, Dict]: ...
 
 
 class CompleteJson(Protocol):
     def __call__(
-        self,
-        purpose: str,
-        system: str,
-        user: str,
-        *,
-        pick: Dict,
-        temperature: float,
-        max_tokens: int,
+        self, purpose: str, system: str, user: str, *,
+        route: ModelRef, temperature: float, max_tokens: int,
     ) -> Dict: ...
 
 

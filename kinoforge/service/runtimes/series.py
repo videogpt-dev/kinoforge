@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from kinoforge.contract import ModelRef
 from kinoforge.definitions import DefinitionBundle, DefinitionRenderer
 from kinoforge.observ import bind, build_logger, logged, reset
 from kinoforge.segments.series.showrunner import Showrunner
@@ -32,14 +33,13 @@ class SeriesRuntime:
             request.definitions.model_dump(exclude_none=True), engine_version="0.1.0"
         )
         logger = build_logger(
-            job_id=request.project_id, segment="series", idempotency_key=request.idempotency_key
+            job_id=request.project_id, segment="series",
+            idempotency_key=request.idempotency_key, level=request.log_level,
         )
         meter = EventMeter()
-        default_pick = dict(request.pick or {})
         ports = InfrelayTextPorts(
             self._settings.infrelay(request.owner),
             DefinitionRenderer(bundle),
-            default_pick=default_pick,
             budgets=dict(request.config.get("budgets") or {}),
             label="series",
             meter=meter,
@@ -48,7 +48,7 @@ class SeriesRuntime:
         token = bind(logger)
         try:
             result = Showrunner(ports).plan(
-                request.series.model_dump(), request.count, default_pick
+                request.series.model_dump(), request.count, ModelRef.from_mapping(request.pick)
             )
         finally:
             reset(token)

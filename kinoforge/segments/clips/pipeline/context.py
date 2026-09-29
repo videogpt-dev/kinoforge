@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
-from kinoforge.contract import Result
-from kinoforge.segments.clips.render.formatter import get_video_metadata
+from kinoforge.contract import Context, Result
+from kinoforge.segments.clips.render.probe import get_video_metadata
 
 
 class ClipStage(StrEnum):
@@ -72,13 +73,41 @@ class StageCtx:
         return True
 
 
-def already_processed(store, job_id: str, slug: str, config: Dict[str, Any]) -> bool:
+@dataclass
+class ClipRun:
+    """One clips execution: the stage context plus what every stage reads (job, config,
+    inputs, working dir) and the transcript once produced."""
+
+    sc: StageCtx
+    ctx: Context
+    job_id: str
+    config: Dict[str, Any]
+    video_path: Optional[Path]
+    audio_path: Optional[Path]
+    workdir: Path
+    transcript: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def media_path(self) -> Path:
+        """What the find stages read: the audio when the host sent it, else the video."""
+        path = self.audio_path or self.video_path
+        if path is None:
+            raise ValueError("clips job requires input.video_path or input.audio_path")
+        return path
+
+    @property
+    def slug(self) -> str:
+        return str(self.config.get("slug") or "")
+
+
+def already_processed(run: ClipRun) -> bool:
+    config = run.config
     return bool(
         config.get("skip_already_processed")
         and not config.get("is_regenerate")
         and not config.get("force")
-        and slug
-        and store.list_clips(job_id)
+        and run.slug
+        and run.ctx.store.list_clips(run.job_id)
     )
 
 

@@ -1,8 +1,4 @@
-"""Single source of service configuration read from the environment.
-
-The runtimes used to each read INFRELAY_URL / INFRELAY_SERVICE_TOKEN (and the clips runtime
-the shared/cache paths) in their own module-level factory. That env access now lives here, in
-one frozen settings object every runtime builds from with `.from_env()`."""
+"""Single source of service configuration read from the environment."""
 
 from __future__ import annotations
 

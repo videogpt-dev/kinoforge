@@ -56,5 +56,8 @@ class BundleImagePresets:
         motion = self._motion(key or self._scene_key)
         if not motion.strip():
             return ""
-        values = {"prompt": "" if prompt is None else str(prompt), "style": "" if style is None else str(style)}
+        values = {
+            "prompt": "" if prompt is None else str(prompt),
+            "style": "" if style is None else str(style),
+        }
         return Template(motion).substitute(values).strip()

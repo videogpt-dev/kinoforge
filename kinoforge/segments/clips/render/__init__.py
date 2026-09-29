@@ -1,3 +1,3 @@
-from kinoforge.segments.clips.render.base_render import render_base_clip
+from kinoforge.segments.clips.render.base_render import BaseCut
 
-__all__ = ["render_base_clip"]
+__all__ = ["BaseCut"]

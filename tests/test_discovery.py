@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from kinoforge.observ import bind, build_logger, reset
+from kinoforge.contract import ModelRef
 from kinoforge.segments.clips.moments.discovery import MomentDiscoverer
 
 
 def _disc(context_window: int) -> MomentDiscoverer:
     # llm is unused by the budget path, so a bare object stands in for it.
-    return MomentDiscoverer(object(), "op", "op:m", context_window=context_window)
+    return MomentDiscoverer(object(), ModelRef("op", "m"), context_window=context_window)
 
 
 def test_fit_budget_keeps_all_when_under_window():

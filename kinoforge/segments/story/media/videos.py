@@ -3,31 +3,24 @@
 A video model sees one prompt at a time and a few seconds of film, so a clip's prompt
 carries the shot direction, the cast (restated so free text-to-video providers keep faces
 consistent), the cinematography line and what continues from the shot before. Builds those
-prompts and runs the clip call with one learned retry against a provider's prompt ceiling.
-The provider call and prompt-limit cache are injected; billing, the director pass, seeds,
-store and placement stay with the caller.
+prompts and runs the clip call under the provider's prompt ceiling. The provider call is
+injected; billing, the director pass, seeds, store and placement stay with the caller.
 """
 
-from typing import Any, Callable, Dict, List
+from dataclasses import replace
+from typing import Callable, Dict, List
 
+from kinoforge.contract import ModelRef, VideoSpec
+from kinoforge.segments.story.media.ceiling import PromptCeiling
 from kinoforge.segments.story.media.prompt_text import LabeledPrompt, PromptText
 
-_VIDEO_KIND = "video"
+GenerateVideo = Callable[[ModelRef, str, VideoSpec], bytes]
 
 
 class ClipMaker:
-    def __init__(
-        self,
-        *,
-        generate_video: Callable[..., bytes],
-        prompt_limit_configured: Callable[[str, str, str], int],
-        prompt_limit_from_error: Callable[[Exception], int],
-        prompt_limit_remember: Callable[[str, str, str, int], None],
-    ) -> None:
+    def __init__(self, *, generate_video: GenerateVideo, ceiling: PromptCeiling) -> None:
         self._generate_video = generate_video
-        self._limit_configured = prompt_limit_configured
-        self._limit_from_error = prompt_limit_from_error
-        self._limit_remember = prompt_limit_remember
+        self._ceiling = ceiling
 
     def cast_in(self, story: Dict, scene_text: str = "", compact: bool = False) -> str:
         """The film's cast, restated for a clip so a character the prompt does not describe
@@ -42,11 +35,15 @@ class ClipMaker:
         if compact:
             characters = PromptText.mentioned_characters(characters, scene_text)
         return "; ".join(
-            f"{c.get('name')}: "
-            f"{PromptText.leading_sentences(str(c.get('description') or ''), 2) if compact else c.get('description')}"
+            f"{c.get('name')}: {self._describe(c, compact)}"
             for c in characters
             if (c.get("name") or "").strip() and (c.get("description") or "").strip()
         )
+
+    @staticmethod
+    def _describe(character: Dict, compact: bool) -> str:
+        description = str(character.get("description") or "")
+        return PromptText.leading_sentences(description, 2) if compact else description
 
     def preset_key(self, rec: Dict, scene: Dict) -> str:
         """The image preset this scene uses (its own pick, else the project's), so look and
@@ -105,31 +102,16 @@ class ClipMaker:
         return [i for i, s in enumerate(scenes) if s.get("motion")]
 
     def generate_clip(
-        self,
-        scene: Dict,
-        story: Dict,
-        motion: str,
-        cfg: Dict,
-        **options: Any,
+        self, scene: Dict, story: Dict, motion: str, ref: ModelRef, spec: VideoSpec
     ) -> bytes:
-        """Generate once; learn and retry one provider-declared prompt ceiling.
-
-        A native-audio scene voices its own dialogue: the spoken words go to the provider as
-        structured `dialogue`, and non-diegetic music is turned off for that clip so speech
-        stays clear (a scene without dialogue keeps music on, for score-only shots)."""
-        provider, model = cfg["provider"], cfg["model"]
+        """A native-audio scene voices its own dialogue: the spoken words go to the provider as
+        structured `dialogue`, and music is turned off so speech stays clear."""
         dialogue = self._spoken_line(scene)
         if dialogue:
-            options["dialogue"] = dialogue
-            options["music"] = False
-        limit = self._limit_configured(provider, _VIDEO_KIND, model)
-        prompt = self.video_prompt(scene, scene.get("shot") or {}, story, motion, limit)
-        try:
-            return self._generate_video(prompt, provider, model, **options)
-        except Exception as error:
-            observed = self._limit_from_error(error)
-            if not observed or (limit and observed >= limit):
-                raise
-            self._limit_remember(provider, _VIDEO_KIND, model, observed)
-            fitted = self.video_prompt(scene, scene.get("shot") or {}, story, motion, observed)
-            return self._generate_video(fitted, provider, model, **options)
+            spec = replace(spec, dialogue=dialogue, music=False)
+        shot = scene.get("shot") or {}
+        return self._ceiling.run(
+            lambda limit: self._generate_video(
+                ref, self.video_prompt(scene, shot, story, motion, limit), spec
+            )
+        )

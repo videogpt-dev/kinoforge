@@ -6,16 +6,16 @@ outside it."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi import HTTPException
 
 from kinoforge.contract import JobKind
+from kinoforge.service.settings import ServiceSettings
 
 
 def shared_root() -> Path:
-    return Path(os.getenv("KINOFORGE_SHARED_ROOT") or "/app/output").resolve()
+    return ServiceSettings.from_env().shared_root.resolve()
 
 
 def shared_path(raw: str, *, must_exist: bool = False) -> Path:

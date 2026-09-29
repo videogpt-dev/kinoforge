@@ -15,8 +15,10 @@ from kinoforge.observ import (
     logged,
     logger_for,
     reset,
+    with_context,
 )
-from kinoforge.observ.logger import SUCCESS
+from kinoforge.observ.config import default_level
+from kinoforge.observ.logger import SUCCESS, TRACE
 
 
 # --- KinoLogger facade ----------------------------------------------------
@@ -65,17 +67,48 @@ def test_logger_for_lives_under_kinoforge_tree():
     assert logger_for("").name == "kinoforge.core"
 
 
-def test_configure_sets_level_and_console_handler(monkeypatch):
+def test_configure_floors_tree_and_env_sets_default_level(monkeypatch):
+    # The tree sits at the TRACE floor; the env sets the per-request default, not the tree level.
     monkeypatch.setenv("KINOFORGE_LOG_LEVEL", "warning")
     root = configure(force=True)
     try:
         assert root.name == "kinoforge"
-        assert root.level == logging.WARNING
+        assert root.level == TRACE
         assert root.propagate is False
         assert any(isinstance(h, logging.StreamHandler) for h in root.handlers)
+        assert default_level() == logging.WARNING
     finally:
         monkeypatch.setenv("KINOFORGE_LOG_LEVEL", "CRITICAL")
         configure(force=True)
+
+
+def test_with_context_carries_bound_logger_into_threads():
+    from concurrent.futures import ThreadPoolExecutor
+
+    logger = build_logger(segment="clips", level="debug")
+    token = bind(logger)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            # Wrapper built here on the main thread carries the bound logger into the worker.
+            assert pool.submit(with_context(lambda: active() is logger)).result() is True
+            # A bare submit does not: the worker thread never inherited the ContextVar.
+            assert pool.submit(lambda: active() is logger).result() is False
+    finally:
+        reset(token)
+
+
+def test_request_level_gates_console_but_not_capture(monkeypatch):
+    # Default (error) suppresses an info line on the console; the capture keeps it regardless.
+    monkeypatch.setenv("KINOFORGE_LOG_LEVEL", "error")
+    quiet = build_logger(segment="clips")
+    quiet.info("hidden on console")
+    assert quiet.entries == [{"level": "info", "text": "hidden on console"}]
+    # A request asking for debug lowers its own threshold; trace stays out of the capture.
+    loud = build_logger(segment="clips", level="debug")
+    loud.debug("shown")
+    loud.trace("finest")
+    assert {"level": "debug", "text": "shown"} in loud.entries
+    assert all(entry["level"] != "trace" for entry in loud.entries)
 
 
 def test_file_sink_writes_json_with_correlation(tmp_path, monkeypatch):

@@ -11,7 +11,7 @@ from kinoforge.segments.clips.pipeline.context import (
     duration_ok,
 )
 
-from tests.support import levels, make_ctx
+from tests.support import levels, make_ctx, make_run
 
 
 # --- StageCtx -------------------------------------------------------------
@@ -65,29 +65,29 @@ class _Store:
         return self._clips
 
 
-def _cfg(**over):
-    base = {"skip_already_processed": True, "is_regenerate": False, "force": False}
-    base.update(over)
-    return base
+def _run(store, slug, **over):
+    config = {"skip_already_processed": True, "is_regenerate": False, "force": False, "slug": slug}
+    config.update(over)
+    return make_run(config, store=store)
 
 
 def test_already_processed_true_when_skip_and_clips_exist():
-    assert already_processed(_Store([{"id": "c1"}]), "j1", "slug", _cfg()) is True
+    assert already_processed(_run(_Store([{"id": "c1"}]), "slug")) is True
 
 
 def test_already_processed_false_when_no_clips():
-    assert already_processed(_Store([]), "j1", "slug", _cfg()) is False
+    assert already_processed(_run(_Store([]), "slug")) is False
 
 
 def test_already_processed_false_when_regenerate_or_force_or_disabled():
     store = _Store([{"id": "c1"}])
-    assert already_processed(store, "j1", "slug", _cfg(is_regenerate=True)) is False
-    assert already_processed(store, "j1", "slug", _cfg(force=True)) is False
-    assert already_processed(store, "j1", "slug", _cfg(skip_already_processed=False)) is False
+    assert already_processed(_run(store, "slug", is_regenerate=True)) is False
+    assert already_processed(_run(store, "slug", force=True)) is False
+    assert already_processed(_run(store, "slug", skip_already_processed=False)) is False
 
 
 def test_already_processed_false_when_no_slug():
-    assert already_processed(_Store([{"id": "c1"}]), "j1", "", _cfg()) is False
+    assert already_processed(_run(_Store([{"id": "c1"}]), "")) is False
 
 
 # --- duration_ok ----------------------------------------------------------

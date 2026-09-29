@@ -1,15 +1,17 @@
 """Clips segment schemas: options (with validation), the execution request, and its response."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kinoforge.observ import active
+from kinoforge.segments.clips.render.media import AspectRatio, ClipQuality
 from kinoforge.schemas.common import (
     DefinitionBundleRequest,
     ExecutionResultResponse,
     ExecutionState,
     ExecutionStateResponse,
+    LoggableRequest,
     LogEntryResponse,
     MeterEventResponse,
 )
@@ -24,11 +26,11 @@ class ClipsOptionsRequest(BaseModel):
     )
     min_length: float = Field(default=20, gt=0, description="Preferred minimum clip duration (s).")
     max_length: float = Field(default=60, gt=0, description="Maximum clip duration in seconds.")
-    formats: List[str] = Field(
-        default_factory=lambda: ["9:16"],
-        description="Output aspect ratios such as 9:16, 16:9, or 1:1.",
+    formats: List[AspectRatio] = Field(
+        default_factory=lambda: [AspectRatio.PORTRAIT],
+        description="Output aspect ratios: 9:16, 16:9, 1:1, 4:5.",
     )
-    quality: Literal["high", "medium", "low"] = "high"
+    quality: ClipQuality = ClipQuality.HIGH
     generate_captions: bool = True
     analyze_only: bool = Field(
         default=False, description="Find and rank moments without rendering clip files."
@@ -38,14 +40,9 @@ class ClipsOptionsRequest(BaseModel):
     )
     whisper_model: Optional[str] = None
     min_interest_score: float = Field(default=0.3, ge=0, le=1)
-    ai_provider: Optional[str] = None
-    moment_route: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Resolved inference provider and model route supplied by runtime.",
-    )
-    anti_hallucination: bool = False
     try_youtube_subs: bool = True
     force: bool = False
+    # moment_finder / moment_route live in the request `config`, not here (see README).
 
     @model_validator(mode="after")
     def validate_clip_window(self) -> "ClipsOptionsRequest":
@@ -61,7 +58,7 @@ class ClipsOptionsRequest(BaseModel):
         return self
 
 
-class ClipsExecutionRequest(BaseModel):
+class ClipsExecutionRequest(LoggableRequest):
     job_id: str = Field(description="Caller-owned execution identifier.")
     idempotency_key: str = Field(
         default="", description="Optional caller key correlating this run (and retries) in logs."
@@ -80,7 +77,9 @@ class ClipsExecutionRequest(BaseModel):
         default_factory=dict,
         description="Resolved engine, transcription, rendering, scoring, and route configuration.",
     )
-    definitions: DefinitionBundleRequest = Field(description="Frozen definitions resolved by Caller.")
+    definitions: DefinitionBundleRequest = Field(
+        description="Frozen definitions resolved by Caller."
+    )
     state: ExecutionState = Field(
         default_factory=ExecutionState, description="Optional durable state restored by Caller."
     )

@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Dict, Optional
 
+from kinoforge.contract import ModelRef
 from kinoforge.definitions import DefinitionBundle, DefinitionRenderer
 from kinoforge.observ import KinoLogger, bind, build_logger, logged, reset
-from kinoforge.segments.story.agent import Screenwriter
+from kinoforge.segments.story.agent import Screenwriter, StoryBrief
 from kinoforge.segments.story.operations import StoryOperations
 from kinoforge.segments.story.ports import StoryPorts
 from kinoforge.segments.story.run_agent import RunAgent
@@ -28,12 +30,12 @@ LANGUAGE_KEY = "prompts.fragments.language"
 
 @dataclass(frozen=True)
 class StorySession:
-    """One resolved story run: the wired ports plus its per-request logger, meter, and pick."""
+    """One resolved story run: the wired ports plus its per-request logger, meter, and route."""
 
     ports: StoryPorts
     logger: KinoLogger
     meter: EventMeter
-    pick: Dict[str, Any]
+    route: ModelRef
 
     def response(self, result: Any) -> Dict[str, Any]:
         return {"result": result, "meter_events": self.meter.events, "logs": self.logger.entries}
@@ -52,11 +54,9 @@ class StoryRuntime:
             request.definitions.model_dump(exclude_none=True), engine_version="0.1.0"
         )
         meter = EventMeter()
-        pick = dict(request.pick or {})
         ports = InfrelayTextPorts(
             self._settings.infrelay(request.owner),
             DefinitionRenderer(bundle),
-            default_pick=pick,
             budgets=dict(request.config.get("budgets") or {}),
             label="story",
             meter=meter,
@@ -64,9 +64,12 @@ class StoryRuntime:
             language_key=LANGUAGE_KEY,
         ).to_ports()
         logger = build_logger(
-            job_id=request.project_id, segment="story", idempotency_key=request.idempotency_key
+            job_id=request.project_id, segment="story",
+            idempotency_key=request.idempotency_key, level=request.log_level,
         )
-        return StorySession(ports=ports, logger=logger, meter=meter, pick=pick)
+        return StorySession(
+            ports=ports, logger=logger, meter=meter, route=ModelRef.from_mapping(request.pick)
+        )
 
     @logged
     def write(
@@ -76,19 +79,14 @@ class StoryRuntime:
     ) -> Dict[str, Any]:
         session = self._session(request)
         ctx = self._writer_context(session.ports, request)
-
-        def on_stage(index: int, total: int, role: str) -> None:
-            session.logger.info(f"Story stage {index + 1}/{total}: {role}", stage=role)
-
         token = bind(session.logger)
         try:
             result = RunAgent(
                 session.ports,
                 request.agent,
                 ctx,
-                on_stage=on_stage,
-                pick=session.pick,
-                project=request.project_id,
+                on_stage=partial(self._log_stage, session.logger),
+                route=session.route,
                 is_cancelled=is_cancelled,
             ).run()
         finally:
@@ -96,54 +94,35 @@ class StoryRuntime:
         return session.response(result)
 
     @staticmethod
+    def _log_stage(logger: KinoLogger, index: int, total: int, role: str) -> None:
+        logger.info(f"Story stage {index + 1}/{total}: {role}", stage=role)
+
+    @staticmethod
     def _writer_context(ports: StoryPorts, request: StoryWriteRequest) -> Dict[str, Any]:
-        context = request.context
-        ctx = Screenwriter(ports).build_context(
-            title=context.title,
-            description=context.description,
-            scene_count=context.scene_count,
-            aspect_ratio=context.aspect_ratio,
-            language=context.language,
-            genre=context.genre,
-            cast=context.cast,
-            premise=context.premise,
-            series_name=context.series_name,
-            series_episodes=context.series_episodes,
-            series_position=context.series_position,
-            mature=context.mature,
-        )
-        # Extra caller-set flags the writer reads (e.g. require_motion for the Video-Mode
-        # quality check) ride through the request's open context.
-        extras = context.model_dump()
-        if "require_motion" in extras:
-            ctx["require_motion"] = bool(extras["require_motion"])
+        fields = request.context.model_dump()
+        ctx = Screenwriter(ports).build_context(StoryBrief.from_mapping(fields))
+        # Caller-set flags the writer reads (e.g. require_motion for the Video-Mode quality
+        # check) ride through the request's open context.
+        if "require_motion" in fields:
+            ctx["require_motion"] = bool(fields["require_motion"])
         return ctx
 
     @logged
     def operate(self, request: StoryOperationRequest) -> Dict[str, Any]:
         session = self._session(request)
-        operations = StoryOperations(session.ports)
         token = bind(session.logger)
         try:
-            result = self._dispatch(
-                operations,
-                request,
-                request.payload,
-                request.config.get("budgets") or {},
-                session.pick,
-            )
+            result = self._dispatch(StoryOperations(session.ports), request, session.route)
         finally:
             reset(token)
         return session.response(result)
 
     @staticmethod
     def _dispatch(
-        operations: StoryOperations,
-        request: StoryOperationRequest,
-        payload: Dict[str, Any],
-        budgets: Dict[str, Any],
-        default_pick: Dict[str, Any],
+        operations: StoryOperations, request: StoryOperationRequest, route: ModelRef
     ) -> Dict[str, Any]:
+        payload = request.payload
+        budgets = request.config.get("budgets") or {}
         match request.operation:
             case StoryOperation.REWRITE_SCENE:
                 return operations.rewrite_scene(
@@ -151,27 +130,27 @@ class StoryRuntime:
                     int(payload.get("index") or 0),
                     request.agent,
                     str(payload.get("instructions") or ""),
-                    default_pick,
+                    route,
                     int(budgets.get("rewrite") or 0),
                 )
             case StoryOperation.REWRITE_CHARACTERS:
                 return operations.rewrite_characters(
                     dict(payload.get("record") or {}),
                     request.agent,
-                    default_pick,
+                    route,
                     int(budgets.get("rewrite") or 0),
                 )
             case StoryOperation.TRANSLATE:
                 return operations.translate(
                     dict(payload.get("story") or {}),
                     str(payload.get("language") or ""),
-                    default_pick,
+                    route,
                     int(budgets.get("translation") or 0),
                 )
             case StoryOperation.DIRECT_SHOTS:
                 return operations.direct_shots(
                     dict(payload.get("record") or {}),
-                    default_pick,
+                    route,
                     int(budgets.get("rewrite") or 0),
                 )
             case _:
@@ -180,6 +159,6 @@ class StoryRuntime:
                     str(payload.get("title") or ""),
                     str(payload.get("description") or ""),
                     str(payload.get("idea") or ""),
-                    default_pick,
+                    route,
                     str(request.config.get("fallback_model") or ""),
                 )

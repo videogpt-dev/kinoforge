@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
-from kinoforge.service.executions import ExecutionConflict, executions
+from kinoforge.service.executions import executions
 from kinoforge.service.runtimes import MediaRuntime
 from kinoforge.schemas import (
     ImageRenderRequest,
@@ -38,14 +38,8 @@ router = APIRouter(tags=["Story"])
     response_model=StoryWriteResponse,
 )
 def write_story(request: StoryWriteRequest) -> dict:
-    try:
-        control = executions.begin(request.job_id)
-    except ExecutionConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    try:
+    with executions.running(request.job_id) as control:
         return StoryRuntime.from_env().write(request, is_cancelled=control.is_cancelled)
-    finally:
-        executions.finish(request.job_id)
 
 
 @router.post(

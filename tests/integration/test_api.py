@@ -109,3 +109,29 @@ def test_clips_options_reject_inverted_length_window(client):
         "options": {"min_length": 60, "max_length": 10},
     }
     assert client.post("/v1/segments/clips/execute", json=body).status_code == 422
+
+
+# --- execution lease + enum validation -----------------------------------
+
+def test_second_run_of_an_active_job_is_409(client, monkeypatch, tmp_path):
+    from kinoforge.service.executions import executions
+
+    monkeypatch.setenv("KINOFORGE_SHARED_ROOT", str(tmp_path))
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    body = {
+        "job_id": "busy", "project_id": "p1", "workspace": str(tmp_path / "w"),
+        "input": {"video_path": str(tmp_path / "v.mp4")}, "definitions": _bundle(),
+    }
+    with executions.running("busy"):
+        r = client.post("/v1/segments/clips/execute", json=body)
+    assert r.status_code == 409
+    assert "already active" in r.json()["detail"]
+
+
+def test_unknown_output_format_is_422(client):
+    body = {
+        "job_id": "j1", "project_id": "p1", "workspace": "w",
+        "input": {"video_path": "v.mp4"}, "definitions": _bundle(),
+        "options": {"formats": ["4:3"]},
+    }
+    assert client.post("/v1/segments/clips/execute", json=body).status_code == 422

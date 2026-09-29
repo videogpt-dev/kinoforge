@@ -1,11 +1,5 @@
 """Adapts an Infrelay text client + resolved definitions into the StoryPorts a story or series
-stage consumes.
-
-Story and series runtimes used to build StoryPorts from a stack of per-request nested closures
-(complete / complete_json / prompt / contract / language_rule / story_budget). Those are bound
-methods here instead: one object holds the client, renderer, default route, and budgets, and
-`to_ports()` hands the stage a StoryPorts backed by it. Series passes no fragment keys, so its
-contract/language_rule raise (planning does not use them)."""
+stage consumes. Series passes no fragment keys, so its contract/language_rule raise."""
 
 from __future__ import annotations
 
@@ -13,11 +7,12 @@ import json
 import re
 from typing import Any, Dict, Optional, Tuple
 
-from kinoforge.contract import Meter, _no_meter
+from kinoforge.contract import Meter, ModelRef, _no_meter
 from kinoforge.definitions import DefinitionRenderer
 from kinoforge.definitions.models import DefinitionKind
-from kinoforge.segments.story.ports import StoryPorts
 from kinoforge.inference import InfrelayClient
+from kinoforge.observ import active
+from kinoforge.segments.story.ports import StoryPorts
 
 
 class InfrelayTextPorts:
@@ -26,7 +21,6 @@ class InfrelayTextPorts:
         infrelay: InfrelayClient,
         renderer: DefinitionRenderer,
         *,
-        default_pick: Dict[str, Any],
         budgets: Dict[str, Any],
         label: str,
         meter: Meter = _no_meter,
@@ -35,7 +29,6 @@ class InfrelayTextPorts:
     ) -> None:
         self._infrelay = infrelay
         self._renderer = renderer
-        self._default_pick = default_pick
         self._budgets = budgets
         self._label = label  # "story" / "series", for the missing-route error
         self._meter = meter
@@ -44,50 +37,30 @@ class InfrelayTextPorts:
 
     def to_ports(self) -> StoryPorts:
         return StoryPorts(
-            complete=self.complete,
-            complete_json=self.complete_json,
-            parse_json=self.parse_json,
-            prompt=self.prompt,
-            contract=self.contract,
-            language_rule=self.language_rule,
-            story_budget=self.story_budget,
+            complete=self.complete, complete_json=self.complete_json,
+            parse_json=self.parse_json, prompt=self.prompt, contract=self.contract,
+            language_rule=self.language_rule, story_budget=self.story_budget,
             meter=self._meter,
         )
 
     def complete(
-        self,
-        purpose: str,
-        system: str,
-        user: str,
-        *,
-        pick: Dict[str, Any],
-        project: str,
-        temperature: float,
-        max_tokens: int,
-        bill: bool,
+        self, purpose: str, system: str, user: str, *,
+        route: ModelRef, temperature: float, max_tokens: int,
     ) -> Tuple[str, Dict[str, Any]]:
-        route = {**self._default_pick, **(pick or {})}
-        provider = str(route.get("provider") or "")
-        model = str(route.get("model") or "")
-        if not provider:
+        if not route.provider:
             raise RuntimeError(f"{self._label} text route is missing a provider")
+        active().debug(f"{self._label} text call: {purpose}", route=str(route),
+                       max_tokens=max_tokens, temperature=temperature)
         return self._infrelay.text(
-            provider, model, system, user, temperature=temperature, max_tokens=max_tokens
+            route, system, user, temperature=temperature, max_tokens=max_tokens
         )
 
     def complete_json(
-        self,
-        purpose: str,
-        system: str,
-        user: str,
-        *,
-        pick: Dict[str, Any],
-        temperature: float,
-        max_tokens: int,
+        self, purpose: str, system: str, user: str, *,
+        route: ModelRef, temperature: float, max_tokens: int,
     ) -> Dict[str, Any]:
         text, _ = self.complete(
-            purpose, system, user, pick=pick, project="",
-            temperature=temperature, max_tokens=max_tokens, bill=True,
+            purpose, system, user, route=route, temperature=temperature, max_tokens=max_tokens
         )
         return self.parse_json(text)
 

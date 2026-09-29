@@ -10,8 +10,9 @@ Env: KINOFORGE_LOG_LEVEL (default INFO), KINOFORGE_LOG_JSON (1 = JSON console),
 KINOFORGE_LOG_FILE (path = also append rotating JSON there)."""
 
 from kinoforge.observ.config import build_logger, configure, logger_for
-from kinoforge.observ.context import LoggerContext
-from kinoforge.observ.logger import SUCCESS, KinoLogger, Logger
+from kinoforge.observ.context import LoggerContext, with_context
+from kinoforge.observ.logger import SUCCESS, TRACE, KinoLogger, Logger
+from kinoforge.observ.shape import shape
 from kinoforge.observ.trace import logged
 
 # Terse aliases so pervasive callers stay `active()` / `bind()` rather than the qualified form.
@@ -29,8 +30,11 @@ __all__ = [
     "reset",
     "current",
     "active",
+    "with_context",
+    "shape",
     "logged",
     "Logger",
     "KinoLogger",
     "SUCCESS",
+    "TRACE",
 ]

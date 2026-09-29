@@ -9,6 +9,19 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from kinoforge.observ import active
+from kinoforge.segments.clips.moments.moment import Moment
+
+
+def _seg_start(seg: Dict) -> float:
+    return float(seg.get("start") or 0)
+
+
+def _seg_end(seg: Dict) -> float:
+    return float(seg.get("end") or 0)
+
+
+def _span(segs: List[Dict], first: int, last: int) -> float:
+    return _seg_end(segs[last]) - _seg_start(segs[first])
 
 
 class TranscriptText:
@@ -21,52 +34,48 @@ class TranscriptText:
     ) -> tuple:
         """Snap a rough [start, end] onto whole-segment boundaries, then size it into the
         [min_len, max_len] window: extend a short pick (forward first, then back) and trim a
-        long one from the tail. Returns (start, end, text).
-
-        Boundaries always land on a segment edge, so a clip opens and closes on a complete
-        sentence instead of the arbitrary second an LLM happened to name."""
-        segs = sorted((s for s in transcript if s.get("text")),
-                      key=lambda s: float(s.get("start") or 0))
-        n = len(segs)
-        if n == 0:
+        long one from the tail. Returns (start, end, text). Boundaries always land on a
+        segment edge, so a clip opens and closes on a complete sentence."""
+        segs = sorted((s for s in transcript if s.get("text")), key=_seg_start)
+        if not segs:
             return start, end, ""
+        first = TranscriptText._first_index(segs, start)
+        last = TranscriptText._last_index(segs, first, end)
+        first, last = TranscriptText._fit(segs, first, last, min_len, max_len)
+        text = " ".join((seg.get("text") or "").strip() for seg in segs[first:last + 1]).strip()
+        return _seg_start(segs[first]), _seg_end(segs[last]), text
 
-        def s_start(i: int) -> float:
-            return float(segs[i].get("start") or 0)
+    @staticmethod
+    def _first_index(segs: List[Dict], start: float) -> int:
+        """The last segment starting at or before `start` (0 when none does)."""
+        first = 0
+        for i, seg in enumerate(segs):
+            if _seg_start(seg) > start:
+                break
+            first = i
+        return first
 
-        def s_end(i: int) -> float:
-            return float(segs[i].get("end") or 0)
+    @staticmethod
+    def _last_index(segs: List[Dict], first: int, end: float) -> int:
+        """The first segment from `first` on that reaches `end` (the last one when none does)."""
+        for i in range(first, len(segs)):
+            if _seg_end(segs[i]) >= end:
+                return i
+        return len(segs) - 1
 
-        si = 0
-        for i in range(n):
-            if s_start(i) <= start:
-                si = i
+    @staticmethod
+    def _fit(segs: List[Dict], first: int, last: int, min_len: float, max_len: float
+             ) -> tuple:
+        """Grow a too-short span (forward first, then back) and trim a too-long one's tail."""
+        n = len(segs)
+        while min_len > 0 and _span(segs, first, last) < min_len and (last < n - 1 or first > 0):
+            if last < n - 1:
+                last += 1
             else:
-                break
-        ei = si
-        for i in range(si, n):
-            if s_end(i) >= end:
-                ei = i
-                break
-        else:
-            ei = n - 1
-        if ei < si:
-            ei = si
-
-        if min_len > 0:
-            while (s_end(ei) - s_start(si)) < min_len and (ei < n - 1 or si > 0):
-                if ei < n - 1:
-                    ei += 1
-                elif si > 0:
-                    si -= 1
-                else:
-                    break
-        if max_len > 0:
-            while (s_end(ei) - s_start(si)) > max_len and ei > si:
-                ei -= 1
-
-        text = " ".join((segs[i].get("text") or "").strip() for i in range(si, ei + 1)).strip()
-        return s_start(si), s_end(ei), text
+                first -= 1
+        while max_len > 0 and _span(segs, first, last) > max_len and last > first:
+            last -= 1
+        return first, last
 
     @staticmethod
     def text_between(transcript: List[Dict], start: float, end: float) -> str:
@@ -188,23 +197,21 @@ class MomentExtractor:
         hook_signal = detector.analyze(transcript, spike.start, spike.end)
         text = TranscriptText.text_between(transcript, spike.start, spike.end)
         combined_score = spike.viral_score * 0.5 + (hook_signal.strength / 10) * 3 * 0.3 + 7.0 * 0.2
-        return {
-            "start": spike.start,
-            "end": spike.end,
-            "duration": spike.duration,
-            "text": text,
-            "score": min(10.0, combined_score),
-            "energy_level": spike.energy_level,
-            "viral_keywords": spike.keywords,
-            "hook_type": hook_signal.hook_type,
-            "hook_strength": hook_signal.strength,
-            "reason": (
+        return Moment.new(
+            spike.start, spike.end,
+            text=text,
+            score=min(10.0, combined_score),
+            energy_level=spike.energy_level,
+            viral_keywords=spike.keywords,
+            hook_type=hook_signal.hook_type,
+            hook_strength=hook_signal.strength,
+            reason=(
                 f"Energy: {spike.energy_level:.0f}/100, "
                 f"Keywords: {', '.join(spike.keywords or ['none'])}"
             ),
-            "language": TranscriptText.detect_language(text),
-            "source": "energy_analysis",
-        }
+            language=TranscriptText.detect_language(text),
+            source="energy_analysis",
+        )
 
     def candidates(self, transcript: List[Dict]) -> List[Dict]:
         """Rule-based fallback (no AI): NON-OVERLAPPING windows spanning the whole transcript,
@@ -232,13 +239,10 @@ class MomentExtractor:
             duration = end_time - start_time
             text = " ".join(text_parts).strip()
             if self.min_length <= duration <= self.max_length and len(text.split()) >= 5:
-                candidates.append({
-                    "start": start_time,
-                    "end": end_time,
-                    "duration": duration,
-                    "text": text,
-                    "language": TranscriptText.detect_language(text),
-                })
+                candidates.append(Moment.new(
+                    start_time, end_time, text=text,
+                    language=TranscriptText.detect_language(text),
+                ))
                 i = j  # advance past this window (non-overlapping)
             else:
                 i += 1

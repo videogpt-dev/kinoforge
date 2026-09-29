@@ -1,203 +1,116 @@
-"""
-Score and rank moments by quality metrics
-"""
+"""Keyless fallback ranking for moments when the moment provider cannot score them."""
+
+from __future__ import annotations
 
 import re
 from typing import Dict, List
-from kinoforge.observ import active
+
+from kinoforge.segments.clips.moments.moment import Moment
+
+_VAGUE_REFS = ("this", "that", "it", "they", "those", "these")
+_SENTENCE_ENDINGS = (".", "!", "?", "।")
+_HOOKS = {
+    "english": [
+        (r"\b(secret|hidden|truth|reality)\b", 3.0),
+        (r"\b(never|always|nobody|everyone)\b", 2.5),
+        (r"^(why|how|what)", 2.0),
+        (r"\b(mistake|wrong|problem)\b", 2.0),
+    ],
+    "hindi": [
+        (r"(रहस्य|सच|वास्तविकता)", 3.0),
+        (r"(क्यों|कैसे|क्या)", 2.0),
+        (r"(गलती|समस्या|गलत)", 2.0),
+    ],
+    "spanish": [
+        (r"(secreto|verdad|realidad)", 3.0),
+        (r"(por qué|cómo|qué)", 2.0),
+    ],
+}
+_ENGAGEMENT = (
+    r"\b(you|your)\b",                    # direct address
+    r"\b(imagine|picture|think about)\b",  # mental imagery
+    r"\?\s*\w+",                           # a question answered
+    r"\b(first|second|finally)\b",         # structure
+)
 
 
-def score_and_rank_moments(
-        moments: List[Dict],
-        transcript: List[Dict]
-) -> List[Dict]:
-    """
-    Score moments on multiple dimensions and rank by total score
+def _clamp(score: float) -> float:
+    return max(0, min(10, score))
 
-    Scoring dimensions (0-10 each):
-    1. Context clarity - How standalone is it?
-    2. Hook strength - How attention-grabbing?
-    3. Standalone understanding - Can new viewer understand?
-    4. Retention potential - Will they watch to the end?
 
-    Args:
-        moments: Filtered candidate moments
-        transcript: Full transcript
+class HeuristicScorer:
+    """Four 0-10 dimensions averaged into `score` (with the parts under `scores`): context
+    clarity, hook strength, standalone understanding, retention. Language comes from the
+    first moment."""
 
-    Returns:
-        Scored and sorted moments (highest first)
-    """
-    if not moments:
-        return []
+    @classmethod
+    def rank(cls, moments: List[Dict]) -> List[Dict]:
+        """Scored copies, best first."""
+        if not moments:
+            return []
+        language = moments[0].get("language", "english")
+        scored = [cls._scored(moment, language) for moment in moments]
+        return sorted(scored, key=lambda m: m["score"], reverse=True)
 
-    # Get language from first moment
-    language = moments[0].get('language', 'english')
-
-    scored_moments = []
-
-    for moment in moments:
+    @classmethod
+    def _scored(cls, moment: Dict, language: str) -> Dict:
         scores = {
-            'context_clarity': score_context_clarity(moment, language),
-            'hook_strength': score_hook_strength(moment, language),
-            'standalone': score_standalone_understanding(moment, language),
-            'retention': score_retention_potential(moment, language)
+            "context_clarity": cls.context_clarity(moment["text"], language),
+            "hook_strength": cls.hook_strength(moment["text"], language),
+            "standalone": cls.standalone(moment["text"]),
+            "retention": cls.retention(moment["text"], Moment(moment).span),
         }
+        return {**moment, "scores": scores, "score": round(sum(scores.values()) / len(scores), 2)}
 
-        # Calculate weighted total (all equal weight)
-        total_score = sum(scores.values()) / len(scores)
-
-        moment_with_score = moment.copy()
-        moment_with_score['scores'] = scores
-        moment_with_score['score'] = round(total_score, 2)
-
-        scored_moments.append(moment_with_score)
-
-    # Sort by total score (descending)
-    scored_moments.sort(key=lambda x: x['score'], reverse=True)
-
-    return scored_moments
-
-
-def score_context_clarity(moment: Dict, language: str = 'english') -> float:
-    """
-    Score how clear the context is (0-10)
-    Higher = more self-contained
-    """
-    text = moment['text']
-    score = 10.0
-
-    # Universal: Check for question marks (always good)
-    if '?' in text or '？' in text:
-        score += 1.0
-
-    # Universal: Check for numbers (often indicates structure)
-    if re.search(r'\d+', text):
-        score += 0.5
-
-    # Language-specific deductions for vague references
-    if language == 'english':
-        vague_refs = ['this', 'that', 'it', 'they', 'those', 'these']
-        first_20_words = ' '.join(text.split()[:20]).lower()
-        for ref in vague_refs:
-            if ref in first_20_words:
-                score -= 1.5
-
-    return max(0, min(10, score))
-
-
-def score_hook_strength(moment: Dict, language: str = 'english') -> float:
-    """
-    Score how attention-grabbing the opening is (0-10)
-    """
-    text = moment['text']
-    first_10_words = ' '.join(text.split()[:10]).lower()
-    score = 5.0  # Base score
-
-    # Universal indicators
-    if '?' in first_10_words or '？' in first_10_words:
-        score += 2.0
-
-    if re.search(r'\d+', first_10_words):
-        score += 1.5
-
-    # Language-specific hook patterns
-    hooks = {
-        'english': [
-            (r'\b(secret|hidden|truth|reality)\b', 3.0),
-            (r'\b(never|always|nobody|everyone)\b', 2.5),
-            (r'^(why|how|what)', 2.0),
-            (r'\b(mistake|wrong|problem)\b', 2.0),
-        ],
-        'hindi': [
-            (r'(रहस्य|सच|वास्तविकता)', 3.0),
-            (r'(क्यों|कैसे|क्या)', 2.0),
-            (r'(गलती|समस्या|गलत)', 2.0),
-        ],
-        'spanish': [
-            (r'(secreto|verdad|realidad)', 3.0),
-            (r'(por qué|cómo|qué)', 2.0),
-        ]
-    }
-
-    lang_hooks = hooks.get(language, [])
-    for pattern, points in lang_hooks:
-        if re.search(pattern, first_10_words, re.IGNORECASE):
-            score += points
-            break  # Only count one strong hook
-
-    return max(0, min(10, score))
-
-
-def score_standalone_understanding(moment: Dict, language: str = 'english') -> float:
-    """
-    Score how well a new viewer can understand this (0-10)
-    """
-    text = moment['text']
-    score = 8.0  # Start optimistic (already passed filters)
-
-    # Universal: Complete sentences are good
-    sentence_endings = ['.', '!', '?', '।']  # Added Devanagari danda
-    if any(text.strip().endswith(end) for end in sentence_endings):
-        score += 1.0
-
-    # Universal: Questions and answers are good
-    if '?' in text and len(text.split('?')) > 1:
-        score += 1.5
-
-    return max(0, min(10, score))
-
-
-def score_retention_potential(moment: Dict, language: str = 'english') -> float:
-    """
-    Score likelihood of keeping viewer engaged (0-10)
-    """
-    text = moment['text']
-    duration = moment['duration']
-    score = 7.0  # Base retention score
-
-    # Optimal length bonus (30-45s is sweet spot)
-    if 30 <= duration <= 45:
-        score += 2.0
-    elif 45 < duration <= 60:
-        score += 1.0
-
-    # Deduct if too long
-    if duration > 55:
-        score -= 1.0
-
-    # Engagement patterns
-    engagement_patterns = [
-        r'\b(you|your)\b',  # Direct address
-        r'\b(imagine|picture|think about)\b',  # Mental imagery
-        r'\?\s*\w+',  # Questions followed by answers
-        r'\b(first|second|finally)\b',  # Structure
-    ]
-
-    for pattern in engagement_patterns:
-        if re.search(pattern, text, re.IGNORECASE):
+    @staticmethod
+    def context_clarity(text: str, language: str) -> float:
+        """Self-contained: questions and numbers help; opening on a vague reference hurts."""
+        score = 10.0
+        if "?" in text or "？" in text:
+            score += 1.0
+        if re.search(r"\d+", text):
             score += 0.5
+        if language == "english":
+            opening = set(re.findall(r"[a-z']+", " ".join(text.split()[:20]).lower()))
+            score -= 1.5 * sum(1 for ref in _VAGUE_REFS if ref in opening)
+        return _clamp(score)
 
-    # Sentence count (good pacing = 3-5 sentences)
-    sentence_count = text.count('.') + text.count('!') + text.count('?')
-    if 3 <= sentence_count <= 5:
-        score += 1.0
+    @staticmethod
+    def hook_strength(text: str, language: str) -> float:
+        """How attention-grabbing the first ten words are; one strong hook counts."""
+        opening = " ".join(text.split()[:10]).lower()
+        score = 5.0
+        if "?" in opening or "？" in opening:
+            score += 2.0
+        if re.search(r"\d+", opening):
+            score += 1.5
+        for pattern, points in _HOOKS.get(language, []):
+            if re.search(pattern, opening, re.IGNORECASE):
+                score += points
+                break
+        return _clamp(score)
 
-    return max(0, min(10, score))
+    @staticmethod
+    def standalone(text: str) -> float:
+        """A new viewer follows it: complete sentences and answered questions."""
+        score = 8.0
+        if text.strip().endswith(_SENTENCE_ENDINGS):
+            score += 1.0
+        if "?" in text and len(text.split("?")) > 1:
+            score += 1.5
+        return _clamp(score)
 
-
-def print_score_summary(moments: List[Dict], top_n: int = 5):
-    """
-    Print scoring summary for debugging
-    """
-    active().info(f"\nTop {top_n} Moments by Score:")
-    active().info("=" * 80)
-
-    for i, moment in enumerate(moments[:top_n], 1):
-        active().info(f"\n#{i} | Score: {moment['score']:.1f}/10")
-        active().info(f"Duration: {moment['duration']:.1f}s")
-        active().info(f"Scores: Context={moment['scores']['context_clarity']:.1f}, "
-              f"Hook={moment['scores']['hook_strength']:.1f}, "
-              f"Standalone={moment['scores']['standalone']:.1f}, "
-              f"Retention={moment['scores']['retention']:.1f}")
-        active().info(f"Text: {moment['text'][:100]}...")
-        active().info("-" * 80)
+    @staticmethod
+    def retention(text: str, duration: float) -> float:
+        """Kept watching: 30-45s is the sweet spot, engagement cues and 3-5 sentences help."""
+        score = 7.0
+        if 30 <= duration <= 45:
+            score += 2.0
+        elif 45 < duration <= 60:
+            score += 1.0
+        if duration > 55:
+            score -= 1.0
+        score += 0.5 * sum(1 for p in _ENGAGEMENT if re.search(p, text, re.IGNORECASE))
+        if 3 <= text.count(".") + text.count("!") + text.count("?") <= 5:
+            score += 1.0
+        return _clamp(score)

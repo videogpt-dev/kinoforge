@@ -6,6 +6,7 @@ import pytest
 
 pytest.importorskip("httpx")
 
+from kinoforge.contract import ModelRef  # noqa: E402
 from kinoforge.service.settings import ServiceSettings  # noqa: E402
 from kinoforge.service.runtimes.text_ports import InfrelayTextPorts  # noqa: E402
 
@@ -45,16 +46,15 @@ class _FakeInfrelay:
     def __init__(self):
         self.calls = []
 
-    def text(self, provider, model, system, user, *, temperature, max_tokens):
-        self.calls.append((provider, model))
+    def text(self, ref, system, user, *, temperature, max_tokens):
+        self.calls.append((ref.provider, ref.model))
         return '{"episodes": [1, 2]}', {"usage": 3}
 
 
-def _ports(default_pick, *, budgets=None, contract_key=None, language_key=None):
+def _ports(*, budgets=None, contract_key=None, language_key=None):
     return InfrelayTextPorts(
         _FakeInfrelay(),
         renderer=object(),  # unused in the paths tested here
-        default_pick=default_pick,
         budgets=budgets or {},
         label="story",
         contract_key=contract_key,
@@ -62,33 +62,31 @@ def _ports(default_pick, *, budgets=None, contract_key=None, language_key=None):
     )
 
 
-def test_complete_routes_through_default_pick():
-    p = _ports({"provider": "op", "model": "m"})
-    text, usage = p.complete("x", "sys", "usr", pick={}, project="", temperature=0.3,
-                             max_tokens=100, bill=True)
+def test_complete_calls_the_given_route():
+    p = _ports()
+    text, usage = p.complete("x", "sys", "usr", route=ModelRef("op", "m"),
+                             temperature=0.3, max_tokens=100)
     assert text == '{"episodes": [1, 2]}'
     assert usage == {"usage": 3}
     assert p._infrelay.calls == [("op", "m")]
 
 
-def test_pick_overrides_default():
-    p = _ports({"provider": "op", "model": "m"})
-    p.complete("x", "s", "u", pick={"model": "m2"}, project="", temperature=0.1, max_tokens=10,
-               bill=True)
+def test_stage_model_override_keeps_the_provider():
+    p = _ports()
+    route = ModelRef("op", "m").with_overrides(model="m2")
+    p.complete("x", "s", "u", route=route, temperature=0.1, max_tokens=10)
     assert p._infrelay.calls == [("op", "m2")]
 
 
 def test_complete_without_provider_raises():
-    p = _ports({})
     with pytest.raises(RuntimeError, match="story text route is missing a provider"):
-        p.complete("x", "s", "u", pick={}, project="", temperature=0.1, max_tokens=10, bill=True)
+        _ports().complete("x", "s", "u", route=ModelRef(), temperature=0.1, max_tokens=10)
 
 
 def test_complete_json_parses_result():
-    p = _ports({"provider": "op", "model": "m"})
-    assert p.complete_json("x", "s", "u", pick={}, temperature=0.2, max_tokens=50) == {
-        "episodes": [1, 2]
-    }
+    assert _ports().complete_json(
+        "x", "s", "u", route=ModelRef("op", "m"), temperature=0.2, max_tokens=50
+    ) == {"episodes": [1, 2]}
 
 
 def test_parse_json_strips_code_fences():
@@ -97,7 +95,7 @@ def test_parse_json_strips_code_fences():
 
 
 def test_story_budget_clamps_override_to_limit():
-    p = _ports({}, budgets={"story": 100})
+    p = _ports(budgets={"story": 100})
     assert p.story_budget() == 100
     assert p.story_budget("50") == 50
     assert p.story_budget("200") == 100  # capped
@@ -106,7 +104,7 @@ def test_story_budget_clamps_override_to_limit():
 
 
 def test_missing_fragment_keys_raise():
-    p = _ports({}, contract_key=None, language_key=None)
+    p = _ports(contract_key=None, language_key=None)
     with pytest.raises(RuntimeError, match="contract fragment is not available"):
         p.contract(6)
     with pytest.raises(RuntimeError, match="language fragment is not available"):

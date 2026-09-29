@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kinoforge.schemas.common import (
     DefinitionBundleRequest,
+    LoggableRequest,
     LogEntryResponse,
     MeterEventResponse,
 )
@@ -32,7 +33,7 @@ class StoryContextRequest(BaseModel):
     mature: bool = False
 
 
-class StoryWriteRequest(BaseModel):
+class StoryWriteRequest(LoggableRequest):
     job_id: str = Field(description="Caller-owned execution identifier.")
     idempotency_key: str = Field(
         default="", description="Optional caller key correlating this run (and retries) in logs."
@@ -72,7 +73,7 @@ class StoryOperation(StrEnum):
     SUGGEST_FIELD = "suggest_field"
 
 
-class StoryOperationRequest(BaseModel):
+class StoryOperationRequest(LoggableRequest):
     job_id: str = Field(description="Caller-owned operation identifier.")
     idempotency_key: str = Field(
         default="", description="Optional caller key correlating this run (and retries) in logs."

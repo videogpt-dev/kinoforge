@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
+from typing import Iterator, Optional
 
 
 class ExecutionConflict(RuntimeError):
@@ -35,6 +37,19 @@ class ExecutionRegistry:
     def finish(self, execution_id: str) -> None:
         with self._lock:
             self._active.pop(execution_id, None)
+
+    @contextmanager
+    def running(self, execution_id: Optional[str]) -> Iterator[Optional[ExecutionControl]]:
+        """Hold `execution_id` active for the block (raises ExecutionConflict if it already is);
+        no id means an untracked run and yields None."""
+        if not execution_id:
+            yield None
+            return
+        control = self.begin(execution_id)
+        try:
+            yield control
+        finally:
+            self.finish(execution_id)
 
     def cancel(self, execution_id: str) -> bool:
         with self._lock:

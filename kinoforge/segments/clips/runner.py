@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from kinoforge.contract import Context, Job, JobKind, Result
 from kinoforge.segments.clips import pipeline as stages
 from kinoforge.segments.clips.pipeline import (
+    ClipRun,
     ClipStage,
     PipelineLogger,
     SaveProject,
@@ -22,6 +23,10 @@ CancellationChecker = Callable[[], bool]
 
 def _not_cancelled() -> bool:
     return False
+
+
+def _path(value: Any) -> Optional[Path]:
+    return Path(value) if value else None
 
 
 class ClipsRunner:
@@ -51,97 +56,63 @@ class ClipsRunner:
     def run(self, job: Job, ctx: Context) -> Result:
         if job.kind != self.kind:
             raise ValueError(f"ClipsRunner cannot run {job.kind}")
-        raw_video_path = job.input.get("video_path")
-        raw_audio_path = job.input.get("audio_path")
-        if not raw_video_path and not raw_audio_path:
+        video_path = _path(job.input.get("video_path"))
+        audio_path = _path(job.input.get("audio_path"))
+        if video_path is None and audio_path is None:
             raise ValueError("clips job requires input.video_path or input.audio_path")
-        video_path = Path(raw_video_path) if raw_video_path else None
-        audio_path = Path(raw_audio_path) if raw_audio_path else None
-
-        config = {**ctx.config, **job.options}
-        return self._process(video_path, audio_path, job.job_id, config, ctx)
-
-    def _process(
-        self,
-        video_path: Optional[Path],
-        audio_path: Optional[Path],
-        job_id: str,
-        config: Dict[str, Any],
-        ctx: Context,
-    ) -> Result:
-        # The find stages read the audio when the host sent it, else the video; rendering uses
-        # video_path directly and is guarded in pipeline.render_clips.
-        media_path = audio_path or video_path
-        if media_path is None:
-            raise ValueError("clips job requires input.video_path or input.audio_path")
-        result = Result(
-            data={
-                "video_path": str(video_path) if video_path else "",
-                "audio_path": str(audio_path) if audio_path else "",
-                "clips": [],
-                "moments": [],
-                "transcript": None,
-                "errors": [],
-            }
+        result = Result(data={
+            "video_path": str(video_path or ""), "audio_path": str(audio_path or ""),
+            "clips": [], "moments": [], "transcript": None, "errors": [],
+        })
+        run = ClipRun(
+            sc=StageCtx(result, self._logger, self._report_stage, self._is_cancelled),
+            ctx=ctx, job_id=job.job_id, config={**ctx.config, **job.options},
+            video_path=video_path, audio_path=audio_path, workdir=ctx.store.workdir(job.job_id),
         )
-        sc = StageCtx(result, self._logger, self._report_stage, self._is_cancelled)
-        video_out = ctx.store.workdir(job_id)
-        slug = config.get("slug", "")
-        provider = self._moment_provider(config, ctx)
-
         try:
-            if sc.stopped():
-                return result
-            self._logger.info(f"Starting: {media_path.name}")
-
-            if stages.already_processed(ctx.store, job_id, slug, config):
-                self._logger.info("Skipping: already has clips (skip_already_processed)")
-                result.status = "skipped"
-                return result
-
-            if not stages.duration_ok(sc, self._check_source_duration, media_path):
-                return result
-
-            transcript = stages.transcribe(
-                sc, self._transcribe_video, media_path, video_out, job_id, config, ctx
-            )
-            if transcript is None:
-                return result
-
-            found = stages.find_moments(sc, provider, transcript, media_path, config)
-            if found is None:
-                return result
-            moments, discovered = found
-            if not moments:
-                sc.stage(ClipStage.MOMENTS, StageStatus.DONE)
-                self._logger.warning("No moments extracted from video")
-                return result
-
-            ranked = stages.rank_moments(sc, provider, moments, discovered, transcript)
-            ranked = stages.apply_limits(sc, ranked, config)
-            used_moments = ranked[: config["clip_count"]]
-            result.data["used_moments"] = used_moments
-
-            created_ids = stages.persist_moments(
-                sc, self._save_project, video_path or media_path, slug, used_moments,
-                transcript, job_id, config, ctx,
-            )
-            sc.stage(ClipStage.MOMENTS, StageStatus.DONE)
-
-            if config.get("analyze_only"):
-                sc.stage(ClipStage.CLIPS, StageStatus.SKIPPED)
-                self._logger.success("Analyze-only: skipping clip extraction (open in editor)")
-                return result
-
-            if sc.stopped():
-                return result
-
-            stages.render_clips(
-                sc, video_path, used_moments, transcript, created_ids, video_out, job_id, config, ctx
-            )
-            return result
-
+            self._stages(run)
         except Exception as exc:
             self._logger.error(f"Unexpected error: {exc}")
-            sc.fail(f"Unexpected error: {exc!s}")
-            return result
+            run.sc.fail(f"Unexpected error: {exc!s}")
+        return result
+
+    def _stages(self, run: ClipRun) -> None:
+        sc = run.sc
+        if sc.stopped():
+            return
+        self._logger.info(f"Starting: {run.media_path.name}")
+        if stages.already_processed(run):
+            self._logger.info("Skipping: already has clips (skip_already_processed)")
+            sc.result.status = "skipped"
+            return
+        if not stages.duration_ok(sc, self._check_source_duration, run.media_path):
+            return
+        if stages.transcribe(run, self._transcribe_video) is None:
+            return
+        used = self._select(run)
+        if used is None:
+            return
+        created_ids = stages.persist_moments(run, self._save_project, used)
+        sc.stage(ClipStage.MOMENTS, StageStatus.DONE)
+        if run.config.get("analyze_only"):
+            sc.stage(ClipStage.CLIPS, StageStatus.SKIPPED)
+            self._logger.success("Analyze-only: skipping clip extraction (open in editor)")
+            return
+        if not sc.stopped():
+            stages.render_clips(run, used, created_ids)
+
+    def _select(self, run: ClipRun) -> Optional[List[Dict[str, Any]]]:
+        """Find, rank and limit moments; the ones to use, or None when the run ends here."""
+        provider = self._moment_provider(run.config, run.ctx)
+        found = stages.find_moments(run, provider)
+        if found is None:
+            return None
+        moments, discovered = found
+        if not moments:
+            run.sc.stage(ClipStage.MOMENTS, StageStatus.DONE)
+            self._logger.warning("No moments extracted from video")
+            return None
+        ranked = stages.rank_moments(run, provider, moments, discovered)
+        used = stages.apply_limits(run.sc, ranked, run.config)[: run.config["clip_count"]]
+        run.sc.result.data["used_moments"] = used
+        return used

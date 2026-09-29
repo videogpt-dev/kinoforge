@@ -1,48 +1,40 @@
-"""Cloud-called image kernel over REST.
-
-Renders one scene image or a character reference sheet: builds the prompt from the frozen
-image presets, calls the gateway, and learns one provider prompt-length ceiling. Stateless
-by design, the caller owns the project store, reference-sheet composition, placement,
-progress and billing; the engine only turns a resolved request into image bytes.
-"""
+"""Story media renders over REST: one scene image or character sheet, one scene clip, the music
+bed, one voiceover, and a prompt preview. Stateless: the caller owns the project store,
+reference-sheet composition, placement, progress and billing."""
 
 from __future__ import annotations
 
 import base64
-import re
+from dataclasses import replace
 from functools import partial
 from string import Template
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
+from kinoforge.contract import ImageSpec, ModelRef, VideoSpec
 from kinoforge.definitions import DefinitionBundle
 from kinoforge.definitions.models import DefinitionKind
-from kinoforge.observ import build_logger, logged
-from kinoforge.service.runtimes.presets import BundleImagePresets
-from kinoforge.service.settings import ServiceSettings
+from kinoforge.observ import KinoLogger, build_logger, logged
 from kinoforge.schemas import (
     ImageRenderRequest,
     MusicRenderRequest,
     StoryPromptPreviewRequest,
     VideoRenderRequest,
-    VoiceRenderRequest)
+    VoiceRenderRequest,
+)
+from kinoforge.segments.story.media.ceiling import PromptCeiling
 from kinoforge.segments.story.media.images import ImagePainter
 from kinoforge.segments.story.media.music import MusicComposer
 from kinoforge.segments.story.media.videos import ClipMaker
-
-_VALIDATION_LIMIT = re.compile(
-    r"input\.prompt.*?(?:less than or equal to|maximum|max(?:imum)? length)\D+(?P<limit>\d+)",
-    re.IGNORECASE | re.DOTALL)
+from kinoforge.service.runtimes.presets import BundleImagePresets
+from kinoforge.service.settings import ServiceSettings
 
 
-def _limit_from_error(error: Exception) -> int:
-    match = _VALIDATION_LIMIT.search(str(error))
-    if not match:
-        return 0
-    try:
-        value = int(match.group("limit"))
-    except (TypeError, ValueError):
-        return 0
-    return value if value > 0 else 0
+def _decode(value: Optional[str]) -> Optional[bytes]:
+    return base64.b64decode(value) if value else None
+
+
+def _no_media(*_args: Any) -> bytes:
+    return b""
 
 
 class MediaRuntime:
@@ -53,217 +45,134 @@ class MediaRuntime:
     def from_env(cls) -> "MediaRuntime":
         return cls(ServiceSettings.from_env())
 
+    @staticmethod
+    def _logger(request: Any, segment: str) -> KinoLogger:
+        return build_logger(
+            job_id=request.project_id, segment=segment,
+            idempotency_key=request.idempotency_key, level=request.log_level,
+        )
+
+    @staticmethod
+    def _bundle(request: Any) -> DefinitionBundle:
+        return DefinitionBundle.from_mapping(
+            request.definitions.model_dump(exclude_none=True), engine_version="0.1.0"
+        )
+
+    @classmethod
+    def _presets(cls, request: Any) -> BundleImagePresets:
+        keys = request.preset_keys
+        return BundleImagePresets(
+            cls._bundle(request), scene_key=keys.scene, portrait_key=keys.portrait,
+            negative_key=keys.negative,
+        )
+
+    @staticmethod
+    def _painter(
+        presets: BundleImagePresets, generate: Any, ceiling: PromptCeiling
+    ) -> ImagePainter:
+        return ImagePainter(
+            generate_image=generate, image_scene=presets.image_scene,
+            image_character=presets.image_character, image_negative=presets.image_negative,
+            ceiling=ceiling,
+        )
+
+    @staticmethod
+    def _motion(presets: BundleImagePresets, maker: ClipMaker, scene: Dict, story: Dict,
+                rec: Dict) -> str:
+        """The picked image preset's cinematography line, applied film-wide."""
+        return presets.image_motion(
+            scene.get("prompt") or "", story.get("style") or "",
+            key=maker.preset_key(rec, scene) or None,
+        )
+
     @logged
     def render_image(self, request: ImageRenderRequest) -> Dict[str, object]:
-        logger = build_logger(
-            job_id=request.project_id, segment="image", idempotency_key=request.idempotency_key
-        )
+        logger = self._logger(request, "image")
         logger.info(f"image render start ({request.mode})", mode=request.mode)
-        infrelay = self._settings.infrelay(request.owner)
-        bundle = DefinitionBundle.from_mapping(
-            request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0")
-        presets = BundleImagePresets(
-            bundle,
-            scene_key=request.preset_keys.scene,
-            portrait_key=request.preset_keys.portrait,
-            negative_key=request.preset_keys.negative)
-        observed: Dict[str, int] = {"limit": 0}
-        painter = ImagePainter(
-            generate_image=infrelay.image,
-            image_scene=presets.image_scene,
-            image_character=presets.image_character,
-            image_negative=presets.image_negative,
-            prompt_limit_configured=lambda _p, _k, _m: request.prompt_limit,
-            prompt_limit_from_error=_limit_from_error,
-            prompt_limit_remember=lambda _p, _k, _m, limit: observed.__setitem__("limit", limit))
-
-        reference: Optional[bytes] = (
-            base64.b64decode(request.reference_b64) if request.reference_b64 else None
+        ceiling = PromptCeiling(request.prompt_limit)
+        painter = self._painter(
+            self._presets(request), self._settings.infrelay(request.owner).image, ceiling
         )
-        cfg = {
-            "provider": str(request.pick.get("provider") or ""),
-            "model": str(request.pick.get("model") or ""),
-        }
         opts = request.options
-        story = dict(request.story)
-        rec = dict(request.rec)
-
+        spec = ImageSpec(
+            aspect_ratio=opts.aspect_ratio, seed=opts.seed, mature=opts.mature,
+            reference=_decode(request.reference_b64), enhance=opts.enhance,
+            enhance_style=opts.enhance_style,
+        )
+        story, rec = dict(request.story), dict(request.rec)
         if request.mode == "character":
-            data = painter.generate_for(
-                lambda limit: painter.character_prompt(story, rec, limit) or "",
-                cfg,
-                reference=reference,
-                aspect_ratio=opts.aspect_ratio,
-                mature=opts.mature,
-                seed=opts.seed,
-                enhance=opts.enhance,
-                enhance_style=opts.enhance_style,
-            )
+            prompt = partial(painter.character_prompt, story, rec)
         else:
-            scene = dict(request.scene)
-            negative = painter.negative() if opts.apply_negative else ""
-            data = painter.generate_for(
-                partial(painter.scene_prompt, scene, story, rec),
-                cfg,
-                reference=reference,
-                aspect_ratio=opts.aspect_ratio,
-                mature=opts.mature,
-                seed=opts.seed,
-                negative=negative,
-                enhance=opts.enhance,
-                enhance_style=opts.enhance_style,
-            )
-
-        logger.success("image render done", bytes=len(data), observed_limit=observed["limit"])
+            prompt = partial(painter.scene_prompt, dict(request.scene), story, rec)
+            if opts.apply_negative:
+                spec = replace(spec, negative=painter.negative())
+        data = painter.generate_for(prompt, ModelRef.from_mapping(request.pick), spec)
+        logger.success("image render done", bytes=len(data), observed_limit=ceiling.learned)
         return {
             "image_b64": base64.b64encode(data).decode(),
             "prompt": "",
-            "observed_limit": observed["limit"],
+            "observed_limit": ceiling.learned,
             "logs": logger.entries,
         }
 
     @logged
     def render_clip(self, request: VideoRenderRequest) -> Dict[str, object]:
-        logger = build_logger(
-            job_id=request.project_id, segment="video", idempotency_key=request.idempotency_key
-        )
+        logger = self._logger(request, "video")
         logger.info("video render start")
-        infrelay = self._settings.infrelay(request.owner)
-        bundle = DefinitionBundle.from_mapping(
-            request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0")
-        presets = BundleImagePresets(
-            bundle,
-            scene_key=request.preset_keys.scene,
-            portrait_key=request.preset_keys.portrait,
-            negative_key=request.preset_keys.negative)
-        observed: Dict[str, int] = {"limit": 0}
+        ceiling = PromptCeiling(request.prompt_limit)
         maker = ClipMaker(
-            generate_video=infrelay.video,
-            prompt_limit_configured=lambda _p, _k, _m: request.prompt_limit,
-            prompt_limit_from_error=_limit_from_error,
-            prompt_limit_remember=lambda _p, _k, _m, limit: observed.__setitem__("limit", limit))
-
-        story = dict(request.story)
-        scene = dict(request.scene)
-        rec = dict(request.rec)
-        cfg = {
-            "provider": str(request.pick.get("provider") or ""),
-            "model": str(request.pick.get("model") or ""),
-        }
-        image: Optional[bytes] = (
-            base64.b64decode(request.image_b64) if request.image_b64 else None
+            generate_video=self._settings.infrelay(request.owner).video, ceiling=ceiling
         )
-        # The cinematography line is a property of the picked image preset, applied film-wide.
-        motion = presets.image_motion(
-            scene.get("prompt") or "",
-            story.get("style") or "",
-            key=maker.preset_key(rec, scene) or None)
+        story, scene, rec = dict(request.story), dict(request.scene), dict(request.rec)
         opts = request.options
-        data = maker.generate_clip(
-            scene,
-            story,
-            motion,
-            cfg,
-            image=image,
-            seconds=opts.seconds,
-            resolution=opts.resolution,
-            aspect_ratio=opts.aspect_ratio,
-            mature=opts.mature,
-            enhance=opts.enhance,
+        spec = VideoSpec(
+            seconds=opts.seconds, resolution=opts.resolution, aspect_ratio=opts.aspect_ratio,
+            mature=opts.mature, image=_decode(request.image_b64), enhance=opts.enhance,
             enhance_style=opts.enhance_style,
         )
-        logger.success("video render done", bytes=len(data), observed_limit=observed["limit"])
+        motion = self._motion(self._presets(request), maker, scene, story, rec)
+        data = maker.generate_clip(scene, story, motion, ModelRef.from_mapping(request.pick), spec)
+        logger.success("video render done", bytes=len(data), observed_limit=ceiling.learned)
         return {
             "video_b64": base64.b64encode(data).decode(),
-            "observed_limit": observed["limit"],
+            "observed_limit": ceiling.learned,
             "logs": logger.entries,
         }
 
     @logged
     def render_music(self, request: MusicRenderRequest) -> Dict[str, object]:
-        logger = build_logger(
-            job_id=request.project_id, segment="music", idempotency_key=request.idempotency_key
-        )
+        logger = self._logger(request, "music")
         logger.info("music render start")
-        infrelay = self._settings.infrelay(request.owner)
-        bundle = DefinitionBundle.from_mapping(
-            request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0")
-        body = bundle.require(DefinitionKind.PRESET, request.music_key).body
-
-        def music_preset(mood: str) -> str:
-            return Template(body).substitute({"mood": mood}).strip()
-
+        body = self._bundle(request).require(DefinitionKind.PRESET, request.music_key).body
         composer = MusicComposer(
-            # The gateway sizes nothing per-project; drop the billing tag the in-process
-            # provider carried (the caller bills around this call).
-            generate_music=lambda prompt, provider, model, *, seconds, project="": infrelay.music(
-                prompt, provider, model, seconds=seconds
-            ),
-            music_preset=music_preset)
-        cfg = {
-            "provider": str(request.pick.get("provider") or ""),
-            "model": str(request.pick.get("model") or ""),
-        }
-        data = composer.compose(dict(request.story), cfg)
+            generate_music=self._settings.infrelay(request.owner).music,
+            music_preset=lambda mood: Template(body).substitute({"mood": mood}).strip(),
+        )
+        data = composer.compose(dict(request.story), ModelRef.from_mapping(request.pick))
         logger.success("music render done", bytes=len(data))
         return {"music_b64": base64.b64encode(data).decode(), "logs": logger.entries}
 
     @logged
     def render_voice(self, request: VoiceRenderRequest) -> Dict[str, object]:
-        logger = build_logger(
-            job_id=request.project_id, segment="voice", idempotency_key=request.idempotency_key
-        )
+        logger = self._logger(request, "voice")
         logger.info("voice render start")
-        infrelay = self._settings.infrelay(request.owner)
-        data = infrelay.speech(
-            request.text,
-            str(request.pick.get("provider") or ""),
-            str(request.pick.get("model") or ""),
-            voice=request.options.voice,
-            language=request.options.language)
+        data = self._settings.infrelay(request.owner).speech(
+            ModelRef.from_mapping(request.pick), request.text,
+            voice=request.options.voice, language=request.options.language,
+        )
         logger.success("voice render done", bytes=len(data))
         return {"audio_b64": base64.b64encode(data).decode(), "logs": logger.entries}
 
     def preview_prompts(self, request: StoryPromptPreviewRequest) -> Dict[str, str]:
-        bundle = DefinitionBundle.from_mapping(
-            request.definitions.model_dump(exclude_none=True),
-            engine_version="0.1.0")
-        presets = BundleImagePresets(
-            bundle,
-            scene_key=request.preset_keys.scene,
-            portrait_key=request.preset_keys.portrait,
-            negative_key=request.preset_keys.negative)
-        painter = ImagePainter(
-            generate_image=lambda *_args, **_kwargs: b"",
-            image_scene=presets.image_scene,
-            image_character=presets.image_character,
-            image_negative=presets.image_negative,
-            prompt_limit_configured=lambda *_args: 0,
-            prompt_limit_from_error=lambda _error: 0,
-            prompt_limit_remember=lambda *_args: None)
-        maker = ClipMaker(
-            generate_video=lambda *_args, **_kwargs: b"",
-            prompt_limit_configured=lambda *_args: 0,
-            prompt_limit_from_error=lambda _error: 0,
-            prompt_limit_remember=lambda *_args: None)
-        story = dict(request.story)
-        scene = dict(request.scene)
-        rec = dict(request.rec)
-        image_prompt = painter.scene_prompt(scene, story, rec, request.image_limit)
-        motion = presets.image_motion(
-            scene.get("prompt") or "",
-            story.get("style") or "",
-            key=maker.preset_key(rec, scene) or None)
+        presets = self._presets(request)
+        painter = self._painter(presets, _no_media, PromptCeiling())
+        maker = ClipMaker(generate_video=_no_media, ceiling=PromptCeiling())
+        story, scene, rec = dict(request.story), dict(request.scene), dict(request.rec)
         return {
-            "image_prompt": image_prompt,
+            "image_prompt": painter.scene_prompt(scene, story, rec, request.image_limit),
             "negative_prompt": painter.negative(),
             "video_prompt": maker.video_prompt(
-                scene,
-                scene.get("shot") or {},
-                story,
-                motion,
-                request.video_limit),
+                scene, scene.get("shot") or {}, story,
+                self._motion(presets, maker, scene, story, rec), request.video_limit,
+            ),
         }

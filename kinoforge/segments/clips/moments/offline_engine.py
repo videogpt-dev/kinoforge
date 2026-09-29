@@ -34,10 +34,6 @@ class OfflineMomentEngine:
 
     def __init__(self):
         self.name = "Offline (Smart)"
-        self.provider = "local"
-
-    def health_check(self) -> bool:
-        return True
 
     def filter_moments(self, candidates: List[Dict], transcript: List[Dict]) -> List[Dict]:
         """Smart local filtering using energy + keywords + hooks."""

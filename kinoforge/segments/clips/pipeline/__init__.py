@@ -1,8 +1,9 @@
 """Clip pipeline stages. ClipsRunner wires the host services and drives these in order; each
-stage function takes a StageCtx (shared result/logger/stage-reporting/cancellation) plus its deps."""
+stage takes the ClipRun (shared run state + stage context) plus the service it needs."""
 
 from kinoforge.segments.clips.pipeline.context import (
     CancellationChecker,
+    ClipRun,
     ClipStage,
     PipelineLogger,
     SaveProject,
@@ -24,6 +25,7 @@ from kinoforge.segments.clips.pipeline.transcribe import transcribe
 
 __all__ = [
     "CancellationChecker",
+    "ClipRun",
     "ClipStage",
     "PipelineLogger",
     "SaveProject",

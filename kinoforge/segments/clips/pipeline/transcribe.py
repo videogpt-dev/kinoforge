@@ -1,62 +1,63 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from kinoforge.contract import Context
 from kinoforge.segments.clips.pipeline.context import (
+    ClipRun,
     ClipStage,
-    StageCtx,
     StageStatus,
     TranscribeVideo,
 )
 
 
-def transcribe(
-    sc: StageCtx,
-    transcribe_video: TranscribeVideo,
-    media_path: Path,
-    video_out: Path,
-    job_id: str,
-    config: Dict[str, Any],
-    ctx: Context,
-) -> Optional[List[Dict[str, Any]]]:
-    """Returns the transcript, or None when the run must stop (failed or cancelled)."""
+def transcribe(run: ClipRun, transcribe_video: TranscribeVideo) -> Optional[List[Dict[str, Any]]]:
+    """Sets run.transcript and returns it, or None when the run must stop (failed/cancelled)."""
+    sc = run.sc
     sc.stage(ClipStage.TRANSCRIBE, StageStatus.RUNNING)
     sc.logger.info("Transcribing")
     try:
-        restart = bool(config.get("force"))
-        fresh = restart or not config.get("try_youtube_subs", True)
-        pretranscript = None if restart else config.get("pretranscript")
-        saved = ctx.store.load_transcript(job_id) if not fresh else None
-
-        if pretranscript:
-            transcript = pretranscript
-            sc.stage(ClipStage.TRANSCRIBE, StageStatus.SKIPPED)
-            sc.logger.success(
-                f"Using YouTube captions ({len(transcript)} segments), skipped transcription"
-            )
-        elif saved:
-            transcript = saved
-            sc.stage(ClipStage.TRANSCRIBE, StageStatus.SKIPPED)
-            sc.logger.success(f"Reusing saved transcript ({len(transcript)} segments)")
-        else:
-            transcript = transcribe_video(
-                media_path,
-                output_dir=video_out,
-                model_size=config.get("whisper_model") or None,
-                language=config.get("language") or None,
-            )
-            sc.stage(ClipStage.TRANSCRIBE, StageStatus.DONE)
+        transcript = _reused(run) or _fresh(run, transcribe_video)
         sc.result.data["transcript"] = transcript
         if transcript:
-            ctx.store.save_transcript(job_id, transcript)
+            run.ctx.store.save_transcript(run.job_id, transcript)
         sc.logger.success(f"Transcription complete ({len(transcript)} segments)")
         if sc.stopped(ClipStage.TRANSCRIBE):
             return None
+        run.transcript = transcript
         return transcript
     except Exception as exc:
         sc.stage(ClipStage.TRANSCRIBE, StageStatus.FAILED)
         sc.fail(f"Transcription failed: {exc!s}")
         sc.logger.error(f"Transcription error: {exc}")
         return None
+
+
+def _reused(run: ClipRun) -> Optional[List[Dict[str, Any]]]:
+    """Host-supplied captions, else a transcript saved by an earlier run (unless forced)."""
+    config, sc = run.config, run.sc
+    if config.get("force"):
+        return None
+    pretranscript = config.get("pretranscript")
+    if pretranscript:
+        sc.stage(ClipStage.TRANSCRIBE, StageStatus.SKIPPED)
+        sc.logger.success(
+            f"Using YouTube captions ({len(pretranscript)} segments), skipped transcription"
+        )
+        return pretranscript
+    saved = (run.ctx.store.load_transcript(run.job_id)
+             if config.get("try_youtube_subs", True) else None)
+    if saved:
+        sc.stage(ClipStage.TRANSCRIBE, StageStatus.SKIPPED)
+        sc.logger.success(f"Reusing saved transcript ({len(saved)} segments)")
+    return saved
+
+
+def _fresh(run: ClipRun, transcribe_video: TranscribeVideo) -> List[Dict[str, Any]]:
+    transcript = transcribe_video(
+        run.media_path,
+        output_dir=run.workdir,
+        model_size=run.config.get("whisper_model") or None,
+        language=run.config.get("language") or None,
+    )
+    run.sc.stage(ClipStage.TRANSCRIBE, StageStatus.DONE)
+    return transcript

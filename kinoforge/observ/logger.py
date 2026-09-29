@@ -3,12 +3,16 @@ from __future__ import annotations
 import logging
 from typing import Any, List, Optional
 
-# One custom level between INFO (20) and WARNING (30): "this stage produced a good result",
-# distinct from a plain progress line. Standard logging has no success level.
+# Custom level between INFO and WARNING: a stage produced a good result.
 SUCCESS = 25
 logging.addLevelName(SUCCESS, "SUCCESS")
 
+# Custom level below DEBUG for fine tracing; console/file only, never captured into `logs`.
+TRACE = 5
+logging.addLevelName(TRACE, "TRACE")
+
 _LEVELS = {
+    "trace": TRACE,
     "debug": logging.DEBUG,
     "info": logging.INFO,
     "success": SUCCESS,
@@ -36,6 +40,7 @@ class KinoLogger:
         stage: str = "",
         idempotency_key: str = "",
         entries: Optional[List[dict]] = None,
+        level: int = 0,
     ) -> None:
         self._log = base
         self.job_id = job_id
@@ -43,28 +48,31 @@ class KinoLogger:
         self.stage = stage
         self.idempotency_key = idempotency_key
         self._entries = entries if entries is not None else []
+        self._level = level  # console/file threshold; capture (.entries) is independent
 
     @property
     def entries(self) -> List[dict]:
         return self._entries
 
     def at_stage(self, stage: str) -> "KinoLogger":
-        """A child bound to a stage, sharing this logger's stdlib logger and capture."""
+        """A child bound to a stage, sharing this logger's stdlib logger, capture, and level."""
         return KinoLogger(
             self._log, job_id=self.job_id, segment=self.segment, stage=stage,
-            idempotency_key=self.idempotency_key, entries=self._entries,
+            idempotency_key=self.idempotency_key, entries=self._entries, level=self._level,
         )
 
-    def event(self, level: str, message: str, **fields: Any) -> None:
+    def event(self, level: str, message: str, *, capture: bool = True, **fields: Any) -> None:
         levelno = _LEVELS.get(level, logging.INFO)
-        # Capture for the HTTP response is independent of the console/file level, so the job
-        # log is complete even when the handlers are quiet.
-        self._entries.append({"level": level, "text": message})
-        if self._log.isEnabledFor(levelno):
+        if capture:
+            self._entries.append({"level": level, "text": message})
+        if levelno >= self._level and self._log.isEnabledFor(levelno):
             self._log.log(levelno, message, extra={"kino": {
                 "job_id": self.job_id, "segment": self.segment, "stage": self.stage,
                 "idempotency_key": self.idempotency_key, "fields": fields,
             }})
+
+    def trace(self, message: str, **fields: Any) -> None:
+        self.event("trace", message, capture=False, **fields)
 
     def debug(self, message: str, **fields: Any) -> None:
         self.event("debug", message, **fields)

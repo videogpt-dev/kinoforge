@@ -3,9 +3,52 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, List, Mapping, Optional, Protocol, runtime_checkable
 
 from kinoforge.definitions import DefinitionBundle
+
+
+@dataclass(frozen=True)
+class ModelRef:
+    """One inference route: which provider serves the call and which of its models."""
+
+    provider: str = ""
+    model: str = ""
+
+    @classmethod
+    def from_mapping(cls, value: Optional[Mapping[str, Any]]) -> "ModelRef":
+        value = value or {}
+        return cls(str(value.get("provider") or "").strip(), str(value.get("model") or "").strip())
+
+    def with_overrides(self, provider: str = "", model: str = "") -> "ModelRef":
+        return ModelRef(provider.strip() or self.provider, model.strip() or self.model)
+
+    def __str__(self) -> str:
+        return f"{self.provider}/{self.model or 'default'}"
+
+
+@dataclass(frozen=True)
+class ImageSpec:
+    aspect_ratio: str = "9:16"
+    seed: Optional[int] = None
+    mature: bool = False
+    negative: str = ""
+    reference: Optional[bytes] = None
+    enhance: bool = False
+    enhance_style: str = ""
+
+
+@dataclass(frozen=True)
+class VideoSpec:
+    seconds: float
+    resolution: int
+    aspect_ratio: str
+    mature: bool = False
+    image: Optional[bytes] = None
+    enhance: bool = False
+    enhance_style: str = ""
+    dialogue: str = ""
+    music: bool = True
 
 
 class JobKind(StrEnum):

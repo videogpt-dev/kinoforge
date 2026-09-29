@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kinoforge.observ import active
-from kinoforge.schemas.common import DefinitionBundleRequest, LogEntryResponse
+from kinoforge.schemas.common import DefinitionBundleRequest, LoggableRequest, LogEntryResponse
+from kinoforge.segments.clips.render.media import AspectRatio, FillStyle, MasterQuality
 
 
 class ImagePresetKeysRequest(BaseModel):
@@ -36,7 +37,7 @@ class ImageOptionsRequest(BaseModel):
     )
 
 
-class ImageRenderRequest(BaseModel):
+class ImageRenderRequest(LoggableRequest):
     job_id: str = Field(description="Caller-owned execution identifier.")
     idempotency_key: str = Field(
         default="", description="Optional caller key correlating this run (and retries) in logs."
@@ -97,16 +98,19 @@ class VideoOptionsRequest(BaseModel):
     )
 
 
-class VideoRenderRequest(BaseModel):
+class VideoRenderRequest(LoggableRequest):
     job_id: str = Field(description="Caller-owned execution identifier.")
     idempotency_key: str = Field(
         default="", description="Optional caller key correlating this run (and retries) in logs."
     )
     project_id: str = Field(default="", description="Caller-owned durable project identifier.")
     owner: str = Field(default="", description="Opaque tenant or owner identifier.")
-    story: Dict[str, Any] = Field(default_factory=dict, description="Story record: characters, style.")
+    story: Dict[str, Any] = Field(
+        default_factory=dict, description="Story record: characters, style."
+    )
     scene: Dict[str, Any] = Field(
-        default_factory=dict, description="The scene to animate, carrying its resolved shot direction."
+        default_factory=dict,
+        description="The scene to animate, carrying its resolved shot direction.",
     )
     rec: Dict[str, Any] = Field(
         default_factory=dict,
@@ -135,7 +139,7 @@ class VideoRenderResponse(BaseModel):
     logs: List[LogEntryResponse] = Field(default_factory=list)
 
 
-class MusicRenderRequest(BaseModel):
+class MusicRenderRequest(LoggableRequest):
     job_id: str = Field(description="Caller-owned execution identifier.")
     idempotency_key: str = Field(
         default="", description="Optional caller key correlating this run (and retries) in logs."
@@ -167,7 +171,7 @@ class VoiceOptionsRequest(BaseModel):
     language: str = ""
 
 
-class VoiceRenderRequest(BaseModel):
+class VoiceRenderRequest(LoggableRequest):
     job_id: str
     idempotency_key: str = Field(
         default="", description="Optional caller key correlating this run (and retries) in logs."
@@ -186,7 +190,7 @@ class VoiceRenderResponse(BaseModel):
     logs: List[LogEntryResponse] = Field(default_factory=list)
 
 
-class StoryPromptPreviewRequest(BaseModel):
+class StoryPromptPreviewRequest(LoggableRequest):
     owner: str = ""
     story: Dict[str, Any] = Field(default_factory=dict)
     scene: Dict[str, Any] = Field(default_factory=dict)
@@ -236,8 +240,8 @@ class BaseRenderRequest(BaseModel):
     )
     src_width: int = Field(gt=1, description="Source width in pixels.")
     src_height: int = Field(gt=1, description="Source height in pixels.")
-    quality: Literal["max", "high", "standard"] = Field(
-        default="high", description="Render quality preset."
+    quality: MasterQuality = Field(
+        default=MasterQuality.HIGH, description="Render quality preset."
     )
 
     @model_validator(mode="after")
@@ -254,10 +258,10 @@ class BaseRenderRequest(BaseModel):
 class FormatRequest(BaseModel):
     source: str = Field(description="Source media path below shared root.")
     output: str = Field(description="Destination media path below shared root.")
-    aspect_ratio: Literal["9:16", "16:9", "1:1"] = Field(
-        default="9:16", description="Target aspect ratio."
+    aspect_ratio: AspectRatio = Field(
+        default=AspectRatio.PORTRAIT, description="Target aspect ratio."
     )
-    fill: Literal["blur", "bars"] = Field(default="blur", description="Background fill mode.")
+    fill: FillStyle = Field(default=FillStyle.BLUR, description="Background fill mode.")
 
 
 class AlignRequest(BaseModel):

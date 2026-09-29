@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, List, Tuple
 
-from kinoforge.contract import Result
+from kinoforge.contract import Context, Result
 from kinoforge.observ import Logger, build_logger
 from kinoforge.segments.clips.pipeline.context import (
+    ClipRun,
     ClipStage,
     StageCtx,
     StageStatus,
@@ -40,3 +42,11 @@ def levels(logger: Logger) -> List[str]:
 
 def texts(logger: Logger) -> List[str]:
     return [entry["text"] for entry in logger.entries]
+
+
+def make_run(config=None, *, store=None, sc=None, video=Path("v.mp4"), audio=None) -> ClipRun:
+    """A ClipRun over a StageCtx (a fresh make_ctx one unless given) for stage tests."""
+    return ClipRun(
+        sc=sc or make_ctx()[0], ctx=Context(store=store), job_id="j1",
+        config=dict(config or {}), video_path=video, audio_path=audio, workdir=Path("work"),
+    )

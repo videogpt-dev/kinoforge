@@ -1,10 +1,15 @@
 """Shared request/response schemas: frozen-definition bundle, execution state, path input,
 and the generic response primitives (meter events, log entries, artifacts, results)."""
 
-from enum import StrEnum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class LoggableRequest(BaseModel):
+    """Adds an optional per-request console log level (trace|debug|info|success|warning|error)."""
+
+    log_level: Optional[str] = Field(default=None)
 
 
 class EngineCompatibilityRequest(BaseModel):

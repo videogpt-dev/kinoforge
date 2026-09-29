@@ -1,7 +1,7 @@
 import json
 from typing import Dict, Optional
 
-from kinoforge.contract import MeterAction
+from kinoforge.contract import MeterAction, ModelRef
 from kinoforge.segments.story.formats import prompt_label
 from kinoforge.segments.story.ports import StoryPorts
 
@@ -10,7 +10,7 @@ class Showrunner:
     def __init__(self, ports: StoryPorts) -> None:
         self.ports = ports
 
-    def plan(self, series: Dict, count: int = 6, pick: Optional[Dict] = None) -> Dict:
+    def plan(self, series: Dict, count: int = 6, route: Optional[ModelRef] = None) -> Dict:
         count = max(1, min(int(count or 6), 12))
         cast = (
             "; ".join(
@@ -36,7 +36,7 @@ class Showrunner:
                 "ideas",
                 self.ports.prompt("story_system"),
                 prompt,
-                pick=dict(pick or {}),
+                route=route or ModelRef(),
                 temperature=0.9,
                 max_tokens=self.ports.story_budget(),
             )
