@@ -135,3 +135,24 @@ def test_unknown_output_format_is_422(client):
         "options": {"formats": ["4:3"]},
     }
     assert client.post("/v1/segments/clips/execute", json=body).status_code == 422
+
+
+# --- transcription --------------------------------------------------------
+
+def test_alignment_falls_back_to_even_timing_when_infrelay_fails(client, monkeypatch, tmp_path):
+    from kinoforge.inference import InfrelayError
+
+    def fail(*_args, **_kwargs):
+        raise InfrelayError("gateway unavailable")
+
+    monkeypatch.setenv("KINOFORGE_SHARED_ROOT", str(tmp_path))
+    monkeypatch.setattr("kinoforge.inference.InfrelayClient.transcribe", fail)
+    (tmp_path / "voice.mp3").write_bytes(b"audio")
+    r = client.post("/v1/segments/clips/transcription/align", json={
+        "path": str(tmp_path / "voice.mp3"), "text": "Keep generated voiceover",
+        "duration": 3, "transcription": {"model": "medium"},
+    })
+    assert r.status_code == 200
+    assert r.json()["segments"] == []
+    words = [word["word"] for word in r.json()["aligned"][0]["words"]]
+    assert words == ["Keep", "generated", "voiceover"]
