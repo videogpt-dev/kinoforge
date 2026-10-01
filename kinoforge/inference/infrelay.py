@@ -25,6 +25,9 @@ class InfrelayClient:
     def _generate(
         self, kind: str, ref: ModelRef, payload: Dict[str, Any], *, timeout: float
     ) -> Dict[str, Any]:
+        log = active()
+        log.debug(f"infrelay -> {kind} {ref}", kind=kind, route=str(ref),
+                  tenant=self._tenant or None, timeout=timeout, payload=shape(payload, max_depth=2))
         if not self._url:
             raise InfrelayError("INFRELAY_URL is required")
         body: Dict[str, Any] = {
@@ -34,7 +37,6 @@ class InfrelayClient:
             body["tenant_id"] = self._tenant
         headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
         url = f"{self._url}/v1/generate"
-        log = active()
         log.debug(f"infrelay -> {kind} {ref}", kind=kind, route=str(ref),
                   tenant=self._tenant or None, url=url, timeout=timeout)
         log.trace(f"infrelay {kind} input", **shape(payload, max_depth=1))
@@ -87,7 +89,7 @@ class InfrelayClient:
         if spec.reference is not None:
             payload["reference_b64"] = base64.b64encode(spec.reference).decode()
         self._add_enhance(payload, spec.enhance, spec.enhance_style)
-        return self._bytes(self._generate("image", ref, payload, timeout=600))
+        return self._bytes(self._generate("image", ref, payload, timeout=1000))
 
     def video(self, ref: ModelRef, prompt: str, spec: VideoSpec) -> bytes:
         """Video (mp4) bytes. A native-audio model voices `dialogue` itself; `music` toggles a

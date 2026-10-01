@@ -48,14 +48,17 @@ class MediaRuntime:
     @staticmethod
     def _logger(request: Any, segment: str) -> KinoLogger:
         return build_logger(
-            job_id=request.project_id, segment=segment,
-            idempotency_key=request.idempotency_key, level=request.log_level,
+            job_id=request.project_id,
+            segment=segment,
+            idempotency_key=request.idempotency_key,
+            level=request.log_level,
         )
 
     @staticmethod
     def _bundle(request: Any) -> DefinitionBundle:
         return DefinitionBundle.from_mapping(
-            request.definitions.model_dump(exclude_none=True), engine_version="0.1.0"
+            request.definitions.model_dump(exclude_none=True),
+            engine_version="0.1.0"
         )
 
     @classmethod

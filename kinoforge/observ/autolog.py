@@ -4,7 +4,7 @@ import functools
 import time
 from typing import Any, Callable
 
-from kinoforge.observ.context import LoggerContext
+from kinoforge.observ.logger_context import LoggerContext
 
 _MAX_REPR = 200
 

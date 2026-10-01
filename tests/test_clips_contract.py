@@ -15,7 +15,7 @@ _ROUTE = {"provider": "cloud", "model": "auto"}
 
 
 def _merge(config: dict) -> dict:
-    """Exactly what ClipsRunner.run does: options over config."""
+    """Exactly what ClipsRuntime.execute does: options over config."""
     return {**config, **ClipsOptionsRequest().model_dump()}
 
 

@@ -67,7 +67,8 @@ def configure(force: bool = False) -> logging.Logger:
     if _configured and not force:
         return root
 
-    root.setLevel(TRACE)  # floor; the KinoLogger decides what emits
+    # floor; let the KinoLogger decides what emits
+    root.setLevel(TRACE)
     root.propagate = False
     root.handlers.clear()
 

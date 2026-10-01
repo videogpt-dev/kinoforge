@@ -4,7 +4,7 @@ import contextvars
 from typing import TYPE_CHECKING, Callable, Optional, TypeVar
 
 if TYPE_CHECKING:
-    from kinoforge.observ.logger import Logger
+    from kinoforge.observ.logger import KinoLogger
 
 _T = TypeVar("_T")
 
@@ -21,13 +21,13 @@ class LoggerContext:
     threading a logger through every call, and stays correct across threads and async tasks.
     Owns the bound-logger ContextVar and the lazily built env fallback."""
 
-    _current: contextvars.ContextVar[Optional["Logger"]] = contextvars.ContextVar(
+    _current: contextvars.ContextVar[Optional["KinoLogger"]] = contextvars.ContextVar(
         "kinoforge_logger", default=None
     )
-    _fallback: Optional["Logger"] = None
+    _fallback: Optional["KinoLogger"] = None
 
     @staticmethod
-    def bind(logger: "Logger") -> contextvars.Token:
+    def bind(logger: "KinoLogger") -> contextvars.Token:
         """Make `logger` the ambient logger for this request. Returns a token to reset() with."""
         return LoggerContext._current.set(logger)
 
@@ -36,12 +36,12 @@ class LoggerContext:
         LoggerContext._current.reset(token)
 
     @staticmethod
-    def current() -> Optional["Logger"]:
+    def current() -> Optional["KinoLogger"]:
         """The ambient logger, or None when nothing is bound (e.g. a direct unit-test call)."""
         return LoggerContext._current.get()
 
     @staticmethod
-    def active() -> "Logger":
+    def active() -> "KinoLogger":
         """The bound logger if there is one, else a lazily built fallback (env sinks, no run
         correlation). Lets library code log unconditionally without threading a logger or
         None-checks; inside a request the runner has bound the correlated logger, so events

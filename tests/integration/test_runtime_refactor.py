@@ -8,7 +8,8 @@ import pytest
 
 pytest.importorskip("httpx")
 
-from kinoforge.contract import Context, ImageSpec, JobKind, ModelRef, VideoSpec  # noqa: E402
+from kinoforge.contract import ImageSpec, JobKind, ModelRef, VideoSpec  # noqa: E402
+from kinoforge.definitions import DefinitionBundle  # noqa: E402
 from kinoforge.inference import InfrelayClient, InfrelayError  # noqa: E402
 from kinoforge.inference import infrelay as infrelay_module  # noqa: E402
 from kinoforge.observ import bind, build_logger, reset  # noqa: E402
@@ -17,7 +18,6 @@ from kinoforge.segments.clips.moments.ai_engine import AiMomentEngine  # noqa: E
 from kinoforge.segments.clips.moments.offline_engine import OfflineMomentEngine  # noqa: E402
 from kinoforge.segments.clips.transcription import TranscriptionError  # noqa: E402
 from kinoforge.service.discovery import SegmentCatalog  # noqa: E402
-from kinoforge.service.runtimes.clips import SourceDurationLimit  # noqa: E402
 from kinoforge.service.runtimes.moment_engines import MomentEngines  # noqa: E402
 from kinoforge.service.runtimes.transcription import GatewayTranscription  # noqa: E402
 
@@ -101,7 +101,7 @@ _CONFIG = {"min_length": 20, "max_length": 60, "scoring": {}}
 
 
 def _engine(config):
-    return MomentEngines(InfrelayClient("http://gw"))(config, Context(store=None))
+    return MomentEngines(InfrelayClient("http://gw"))(config, DefinitionBundle.empty())
 
 
 def test_ai_route_builds_the_ai_engine_named_by_route():
@@ -128,14 +128,7 @@ def test_ai_without_route_warns_loudly_and_falls_back():
     assert any(e["level"] == "warning" and "no moment_route" in e["text"] for e in logger.entries)
 
 
-# --- SourceDurationLimit / catalog ---------------------------------------
-
-def test_source_duration_limit():
-    limit = SourceDurationLimit({"limits": {"source_max_seconds": 600}})
-    assert limit(300) is None
-    assert "over 10 minute limit" in limit(900)
-    assert SourceDurationLimit({})(99999) is None
-
+# --- catalog ---------------------------------------------------------------
 
 def test_catalog_lists_three_segments_with_paths_and_planned_assembly():
     segments = {s.code_name: s for s in SegmentCatalog.list().segments}

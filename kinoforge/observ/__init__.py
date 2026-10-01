@@ -9,11 +9,11 @@ Caller for the job log. The @logged decorator auto-logs a method's input and out
 Env: KINOFORGE_LOG_LEVEL (default INFO), KINOFORGE_LOG_JSON (1 = JSON console),
 KINOFORGE_LOG_FILE (path = also append rotating JSON there)."""
 
+from kinoforge.observ.autolog import logged
 from kinoforge.observ.config import build_logger, configure, logger_for
-from kinoforge.observ.context import LoggerContext, with_context
-from kinoforge.observ.logger import SUCCESS, TRACE, KinoLogger, Logger
+from kinoforge.observ.logger import SUCCESS, TRACE, KinoLogger
+from kinoforge.observ.logger_context import LoggerContext, with_context
 from kinoforge.observ.shape import shape
-from kinoforge.observ.trace import logged
 
 # Terse aliases so pervasive callers stay `active()` / `bind()` rather than the qualified form.
 bind = LoggerContext.bind
@@ -33,7 +33,6 @@ __all__ = [
     "with_context",
     "shape",
     "logged",
-    "Logger",
     "KinoLogger",
     "SUCCESS",
     "TRACE",

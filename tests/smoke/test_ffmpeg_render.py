@@ -1,6 +1,6 @@
 """Real-ffmpeg smoke tests for the clips render layer and the whole clips pipeline: probe, raw
 cuts (incl. the keyframe-drift fix), aspect formatting, captions, variants, the cancellable
-base render, and an end-to-end ClipsRunner run. Skipped when ffmpeg is not installed."""
+base render, and an end-to-end ClipsPipeline run. Skipped when ffmpeg is not installed."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ pytestmark = pytest.mark.skipif(
     not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="ffmpeg not installed"
 )
 
-from kinoforge.contract import Context, Job, JobKind, MeterAction  # noqa: E402
+from kinoforge.contract import MeterAction  # noqa: E402
 from kinoforge.segments.clips.moments.moment import Moment  # noqa: E402
-from kinoforge.segments.clips.project import write_project  # noqa: E402
+from kinoforge.segments.clips.pipeline import ClipsPipeline  # noqa: E402
 from kinoforge.segments.clips.render.base_render import BaseCut  # noqa: E402
 from kinoforge.segments.clips.render.captions import CaptionWindow  # noqa: E402
 from kinoforge.segments.clips.render.clip_processor import extract_clips  # noqa: E402
@@ -27,9 +27,7 @@ from kinoforge.segments.clips.render.formatter import (  # noqa: E402
 )
 from kinoforge.segments.clips.render.media import FillStyle, MasterQuality  # noqa: E402
 from kinoforge.segments.clips.render.probe import get_video_metadata  # noqa: E402
-from kinoforge.segments.clips.runner import ClipsRunner  # noqa: E402
-from kinoforge.service.executions import ExecutionStore  # noqa: E402
-
+from kinoforge.segments.clips.run import ClipRun  # noqa: E402
 from tests.support import capturing_logger  # noqa: E402
 
 _TRANSCRIPT = [
@@ -186,40 +184,33 @@ def test_base_render_cancel_removes_partial_output(source, tmp_path):
 
 # --- whole pipeline -------------------------------------------------------
 
-def test_clips_runner_end_to_end(source, tmp_path):
+def test_clips_pipeline_end_to_end(source, tmp_path):
     """Preset moments keep it deterministic: transcribe (stub) -> find -> rank -> limits ->
-    project.json + clip pool -> cut -> format -> place, all on real ffmpeg + ExecutionStore."""
-    job_id = "proj1"
-    store = ExecutionStore(tmp_path / "ws", job_id, source)
-    logger, _ = capturing_logger()
+    project record + clip ids -> cut -> format -> place, all on real ffmpeg."""
     metered: list = []
-    runner = ClipsRunner(
-        logger=logger, report_stage=lambda stage, status: None,
-        check_source_duration=lambda _seconds: None,
-        transcribe_video=lambda *_a, **_k: list(_TRANSCRIPT),
-        save_project=write_project, moment_provider=lambda _config, _ctx: None,
-    )
     config = {
-        "slug": job_id, "output_dir": str(tmp_path), "clip_count": 2, "min_length": 1,
+        "slug": "proj1", "output_dir": str(tmp_path), "clip_count": 2, "min_length": 1,
         "max_length": 10, "min_interest_score": 0, "formats": ["9:16", "16:9"],
         "quality": "medium", "generate_captions": True, "verbose": False,
         "preset_moments": [{"start": 0.5, "end": 2.5, "score": 9}, {"start": 3, "end": 5}],
         "processing": {"max_workers": 2, "use_gpu": False},
         "rendering": {"burn_subtitles": True, "mute_output": False},
     }
-    result = runner.run(
-        Job(kind=JobKind.CLIPS, job_id=job_id, input={"video_path": str(source)}),
-        Context(store=store, config=config, meter=_meter(metered)),
+    run = ClipRun(
+        job_id="proj1", config=config, workdir=tmp_path / "ws", logger=capturing_logger()[0],
+        video_path=source, meter=_meter(metered),
     )
-    assert result.status == "ok", result.error
-    assert len(result.artifacts) == 2
-    for artifact in result.artifacts:
-        info = _streams(artifact.path)
+    ClipsPipeline(
+        transcribe_video=lambda *_a, **_k: list(_TRANSCRIPT), moment_engine=None,
+    ).run(run)
+    assert run.status == "ok", run.error
+    assert len(run.artifacts) == 2
+    for artifact in run.artifacts:
+        info = _streams(Path(artifact["path"]))
         assert (info["width"], info["height"]) == (1080, 1920)  # primary format placed
         assert info["duration"] == pytest.approx(2.0, abs=0.3)
-    record = store.load_record(job_id)
-    assert [m["start"] for m in record["moments"]] == [0.5, 3.0]
-    assert record["width"] == 640 and record["fps"] == pytest.approx(25.0)
+    assert [m["start"] for m in run.record["moments"]] == [0.5, 3.0]
+    assert run.record["width"] == 640 and run.record["fps"] == pytest.approx(25.0)
     assert not (tmp_path / "ws" / "_work").exists()  # scratch cleaned
     assert (MeterAction.CLIP_RENDER, 2) in metered
     assert (MeterAction.CLIP_VARIANT, 2) in metered

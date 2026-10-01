@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Generator, Optional
 
 
 class ExecutionConflict(RuntimeError):
@@ -39,7 +39,7 @@ class ExecutionRegistry:
             self._active.pop(execution_id, None)
 
     @contextmanager
-    def running(self, execution_id: Optional[str]) -> Iterator[Optional[ExecutionControl]]:
+    def running(self, execution_id: Optional[str]) -> Generator[Optional[ExecutionControl]]:
         """Hold `execution_id` active for the block (raises ExecutionConflict if it already is);
         no id means an untracked run and yields None."""
         if not execution_id:

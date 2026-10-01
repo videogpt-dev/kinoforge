@@ -1,37 +1,10 @@
-"""Clips JobOptions parsing and the per-request logger + EventMeter service adapters."""
+"""The per-request logger + EventMeter service adapters."""
 
 from __future__ import annotations
 
 from kinoforge.contract import MeterAction
 from kinoforge.observ import build_logger
-from kinoforge.segments.clips.options import JobOptions
 from kinoforge.service.meter import EventMeter
-
-
-# --- JobOptions -----------------------------------------------------------
-
-def test_from_dict_defaults_when_empty():
-    opts = JobOptions.from_dict(None)
-    assert opts.clips == 10
-    assert opts.formats == ["9:16"]
-    assert opts.quality == "high"
-    assert opts.force is False
-
-
-def test_from_dict_drops_unknown_keys():
-    opts = JobOptions.from_dict({"clips": 3, "bogus": "x", "force": True})
-    assert opts.clips == 3
-    assert opts.force is True
-    assert not hasattr(opts, "bogus")
-
-
-def test_to_dict_roundtrips_known_fields():
-    opts = JobOptions.from_dict({"clips": 4, "language": "en"})
-    data = opts.to_dict()
-    assert data["clips"] == 4
-    assert data["language"] == "en"
-    assert JobOptions.from_dict(data).to_dict() == data
-
 
 # --- EventMeter -----------------------------------------------------------
 

@@ -1,33 +1,25 @@
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from kinoforge.contract import Context, Job, JobKind, Result
+from kinoforge.contract import JobKind
 from kinoforge.definitions import DefinitionBundle
 from kinoforge.observ import KinoLogger, bind, build_logger, logged, reset
 from kinoforge.schemas import ClipsExecutionRequest
-from kinoforge.segments.clips.project import write_project
-from kinoforge.segments.clips.runner import ClipsRunner
-from kinoforge.service.executions import ExecutionStore
+from kinoforge.segments.clips.pipeline import ClipsPipeline
+from kinoforge.segments.clips.run import ClipRun
 from kinoforge.service.meter import EventMeter
 from kinoforge.service.runtimes.moment_engines import MomentEngines
 from kinoforge.service.runtimes.transcription import gateway_transcriber
 from kinoforge.service.settings import ServiceSettings
 
 
-class SourceDurationLimit:
-    """Rejects a source longer than config.limits.source_max_seconds (0 = no limit)."""
-
-    def __init__(self, config: Dict[str, Any]) -> None:
-        self._seconds = float((config.get("limits") or {}).get("source_max_seconds") or 0)
-
-    def __call__(self, duration: float) -> Optional[str]:
-        if self._seconds and duration > self._seconds:
-            return (f"Video is {duration / 60:.0f} minutes, "
-                    f"over {self._seconds / 60:.0f} minute limit.")
-        return None
+def _path(value: Any) -> Optional[Path]:
+    return Path(value) if value else None
 
 
 class ClipsRuntime:
+    """HTTP request in, ClipRun through the pipeline, response dict out."""
+
     def __init__(self, settings: ServiceSettings) -> None:
         self._settings = settings
 
@@ -42,7 +34,7 @@ class ClipsRuntime:
         *,
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
-        # The runner works from {**config, **options}; see README "Clips request".
+        # Stages read {**config, **options}; see README "Clips request".
         config = {**request.config, **request.options.model_dump()}
         logger = build_logger(
             job_id=request.project_id, segment=JobKind.CLIPS.value,
@@ -52,56 +44,50 @@ class ClipsRuntime:
         definitions = DefinitionBundle.from_mapping(
             request.definitions.model_dump(exclude_none=True), engine_version="0.1.0"
         )
-        store = self._store(request)
+        workspace = Path(request.workspace)
+        workspace.mkdir(parents=True, exist_ok=True)
         self._log_request(logger, request, config, definitions)
-        runner = ClipsRunner(
-            logger=logger,
-            report_stage=lambda stage, status: logger.debug(
-                f"stage {stage.value}:{status.value}", stage=stage.value, status=status.value
-            ),
-            check_source_duration=SourceDurationLimit(config),
-            transcribe_video=gateway_transcriber(
-                self._settings, request.owner, request.config["transcription"], meter
-            ).transcribe_video,
-            save_project=write_project,
-            moment_provider=MomentEngines(self._settings.infrelay(request.owner)),
-            is_cancelled=is_cancelled,
+        run = ClipRun(
+            job_id=request.project_id, config=config, workdir=workspace, logger=logger,
+            video_path=_path(request.input.get("video_path")),
+            audio_path=_path(request.input.get("audio_path")),
+            meter=meter,
+            record=request.state.record,
+            transcript=list(request.state.transcript or []),
+            has_clips=request.state.has_clips,
         )
-        context = Context(
-            store=store, owner=request.owner, config=dict(request.config),
-            definitions=definitions, infrelay_url=self._settings.infrelay_url, meter=meter,
-        )
-        job = Job(kind=JobKind.CLIPS, job_id=request.project_id, input=dict(request.input),
-                  options=request.options.model_dump())
+        if is_cancelled is not None:
+            run.is_cancelled = is_cancelled
         token = bind(logger)
         try:
-            result = runner.run(job, context)
+            ClipsPipeline(
+                transcribe_video=gateway_transcriber(
+                    self._settings, request.owner, request.config["transcription"], meter
+                ).transcribe_video,
+                moment_engine=MomentEngines(self._settings.infrelay(request.owner))(
+                    config, definitions
+                ),
+            ).run(run)
         finally:
             reset(token)
-        return self._response(request, result, store, definitions, meter, logger)
-
-    @staticmethod
-    def _source(request: ClipsExecutionRequest) -> Path:
-        return Path(str(request.input.get("video_path") or request.input.get("audio_path") or ""))
-
-    @classmethod
-    def _store(cls, request: ClipsExecutionRequest) -> ExecutionStore:
-        state = request.state
-        return ExecutionStore(
-            Path(request.workspace), request.project_id, cls._source(request),
-            record=state.record, transcript=state.transcript, has_clips=state.has_clips,
-        )
+        return self._response(request, run, definitions, meter, logger)
 
     def _log_request(
-        self, logger: KinoLogger, request: ClipsExecutionRequest, config: Dict[str, Any],
+        self, logger: KinoLogger,
+        request: ClipsExecutionRequest,
+        config: Dict[str, Any],
         definitions: DefinitionBundle,
     ) -> None:
-        source = self._source(request)
+        source = Path(str(request.input.get("video_path") or request.input.get("audio_path") or ""))
         logger.debug(
             f"clips execute: project={request.project_id} source={source.name}",
-            job_id=request.job_id, workspace=request.workspace, source=str(source),
-            owner=request.owner or None, infrelay_url=self._settings.infrelay_url,
-            definitions=definitions.version, config_keys=sorted(config),
+            job_id=request.job_id,
+            workspace=request.workspace,
+            source=str(source),
+            owner=request.owner or None,
+            infrelay_url=self._settings.infrelay_url,
+            definitions=definitions.version,
+            config_keys=sorted(config),
         )
         logger.debug(
             "clips moment settings",
@@ -115,10 +101,10 @@ class ClipsRuntime:
 
     @staticmethod
     def _response(
-        request: ClipsExecutionRequest, result: Result, store: ExecutionStore,
+        request: ClipsExecutionRequest, run: ClipRun,
         definitions: DefinitionBundle, meter: EventMeter, logger: KinoLogger,
     ) -> Dict[str, Any]:
-        result.data["execution"] = {
+        run.data["execution"] = {
             "id": request.job_id,
             "project_id": request.project_id,
             "segment": JobKind.CLIPS.value,
@@ -126,16 +112,13 @@ class ClipsRuntime:
         }
         return {
             "result": {
-                "status": result.status,
-                "artifacts": [
-                    {"path": str(a.path), "media": a.media, "meta": a.meta}
-                    for a in result.artifacts
-                ],
-                "stages": result.stages,
-                "error": result.error,
-                "data": result.data,
+                "status": run.status,
+                "artifacts": run.artifacts,
+                "stages": run.stages,
+                "error": run.error,
+                "data": run.data,
             },
-            "state": {"record": store.record, "transcript": store.transcript},
+            "state": {"record": run.record, "transcript": run.transcript or None},
             "meter_events": meter.events,
             "logs": logger.entries,
         }

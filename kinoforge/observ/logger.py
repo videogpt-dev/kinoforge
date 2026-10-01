@@ -88,7 +88,3 @@ class KinoLogger:
 
     def error(self, message: str, **fields: Any) -> None:
         self.event("error", message, **fields)
-
-
-# Back-compat alias: callers and type hints refer to `Logger`.
-Logger = KinoLogger

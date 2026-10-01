@@ -3,8 +3,8 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Dict, Union
 
-from kinoforge.contract import Context, ModelRef
-from kinoforge.definitions import DefinitionRenderer
+from kinoforge.contract import ModelRef
+from kinoforge.definitions import DefinitionBundle, DefinitionRenderer
 from kinoforge.inference import InfrelayClient
 from kinoforge.observ import active
 from kinoforge.segments.clips.moments.ai_engine import AiMomentEngine
@@ -12,7 +12,7 @@ from kinoforge.segments.clips.moments.offline_engine import OfflineMomentEngine
 
 
 class MomentEngines:
-    """The clips runner's moment_provider: picks the offline or AI moment engine per run from
+    """Picks the offline or AI moment engine per run from
     config.moment_finder (auto|ai|offline) and config.moment_route."""
 
     def __init__(self, infrelay: InfrelayClient) -> None:
@@ -25,7 +25,7 @@ class MomentEngines:
         return finder == "offline" or not (config.get("moment_route") or {})
 
     def __call__(
-        self, config: Dict[str, Any], ctx: Context
+        self, config: Dict[str, Any], definitions: DefinitionBundle
     ) -> Union[AiMomentEngine, OfflineMomentEngine]:
         finder = str(config.get("moment_finder") or "auto")
         route = ModelRef.from_mapping(config.get("moment_route"))
@@ -46,5 +46,5 @@ class MomentEngines:
             tuning=config.get("scoring"),
             context_window=int(config.get("context_window") or 1_000_000),
             complete=partial(self._infrelay.complete, route),
-            render=DefinitionRenderer(ctx.definitions),
+            render=DefinitionRenderer(definitions),
         )

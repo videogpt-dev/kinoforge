@@ -1,9 +1,8 @@
 """Editor project record (project.json): source, probe, merged moments and transcript."""
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from kinoforge.contract import ProjectStore
 from kinoforge.segments.clips.moments.moment import Moment
 from kinoforge.segments.clips.render.probe import get_video_metadata
 
@@ -46,17 +45,18 @@ def _transcript_rows(transcript: List[Dict]) -> List[Dict]:
     ]
 
 
-def write_project(
+def build_record(
     video_path: Path,
     config: Dict[str, Any],
     slug: str,
     moments: List[Dict],
     transcript: List[Dict],
-    store: ProjectStore,
-) -> None:
+    existing: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """The project record, with `moments` merged into the ones `existing` already holds."""
     probe = get_video_metadata(video_path)
-    existing = store.load_record(slug) or {}
-    store.save_record(slug, {
+    existing = existing or {}
+    return {
         "slug": slug,
         "title": config.get("title") or slug,
         "source": _relative_source(video_path, Path(config["output_dir"])),
@@ -64,4 +64,4 @@ def write_project(
         "formats": config.get("formats", []),
         "moments": _merge_moments(existing.get("moments", []), moments),
         "transcript": _transcript_rows(transcript),
-    })
+    }
