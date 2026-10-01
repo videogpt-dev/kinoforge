@@ -1,17 +1,11 @@
-"""The editor's base render: one cropped, trimmed master from the source."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
-from kinoforge.segments.clips.render import ffmpeg
+from kinoforge.segments.clips.render.ffmpeg import Ffmpeg
 from kinoforge.segments.clips.render.media import MasterQuality
-
-
-def _even(n: float) -> int:
-    return 2 * int(round(n / 2))
 
 
 @dataclass(frozen=True)
@@ -31,9 +25,9 @@ class BaseCut:
         """Pixel crop, snapped to even sizes (x264 needs them) and kept inside the frame."""
         box = self.crop or {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
         width, height = self.source_size
-        x, y = _even(box["x"] * width), _even(box["y"] * height)
-        w = min(_even(box["w"] * width), width - x)
-        h = min(_even(box["h"] * height), height - y)
+        x, y = self._even(box["x"] * width), self._even(box["y"] * height)
+        w = min(self._even(box["w"] * width), width - x)
+        h = min(self._even(box["h"] * height), height - y)
         w, h = max(2, w - w % 2), max(2, h - h % 2)
         return f"crop={w}:{h}:{x}:{y}"
 
@@ -45,4 +39,8 @@ class BaseCut:
             "-c:v", "libx264", "-preset", "medium", "-crf", MasterQuality(self.quality).crf,
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(self.output),
         ]
-        return ffmpeg.run_cancellable(args, self.output, is_cancelled)
+        return Ffmpeg.run_cancellable(args, self.output, is_cancelled)
+
+    @staticmethod
+    def _even(n: float) -> int:
+        return 2 * int(round(n / 2))

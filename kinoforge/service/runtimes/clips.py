@@ -5,16 +5,12 @@ from kinoforge.contract import JobKind
 from kinoforge.definitions import DefinitionBundle
 from kinoforge.observ import KinoLogger, bind, build_logger, logged, reset
 from kinoforge.schemas import ClipsExecutionRequest
+from kinoforge.segments.clips.moments.engines import MomentEngines
 from kinoforge.segments.clips.pipeline import ClipsPipeline
 from kinoforge.segments.clips.run import ClipRun
 from kinoforge.service.meter import EventMeter
-from kinoforge.service.runtimes.moment_engines import MomentEngines
-from kinoforge.service.runtimes.transcription import gateway_transcriber
+from kinoforge.service.runtimes.transcription import GatewayTranscriber
 from kinoforge.service.settings import ServiceSettings
-
-
-def _path(value: Any) -> Optional[Path]:
-    return Path(value) if value else None
 
 
 class ClipsRuntime:
@@ -27,6 +23,10 @@ class ClipsRuntime:
     def from_env(cls) -> "ClipsRuntime":
         return cls(ServiceSettings.from_env())
 
+    @staticmethod
+    def _path(value: Any) -> Optional[Path]:
+        return Path(value) if value else None
+
     @logged
     def execute(
         self,
@@ -34,7 +34,6 @@ class ClipsRuntime:
         *,
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
-        # Stages read {**config, **options}; see README "Clips request".
         config = {**request.config, **request.options.model_dump()}
         logger = build_logger(
             job_id=request.project_id, segment=JobKind.CLIPS.value,
@@ -49,22 +48,21 @@ class ClipsRuntime:
         self._log_request(logger, request, config, definitions)
         run = ClipRun(
             job_id=request.project_id, config=config, workdir=workspace, logger=logger,
-            video_path=_path(request.input.get("video_path")),
-            audio_path=_path(request.input.get("audio_path")),
+            video_path=self._path(request.input.get("video_path")),
+            audio_path=self._path(request.input.get("audio_path")),
             meter=meter,
             record=request.state.record,
             transcript=list(request.state.transcript or []),
             has_clips=request.state.has_clips,
+            is_cancelled=is_cancelled,
         )
-        if is_cancelled is not None:
-            run.is_cancelled = is_cancelled
         token = bind(logger)
         try:
             ClipsPipeline(
-                transcribe_video=gateway_transcriber(
+                transcribe_video=GatewayTranscriber(
                     self._settings, request.owner, request.config["transcription"], meter
                 ).transcribe_video,
-                moment_engine=MomentEngines(self._settings.infrelay(request.owner))(
+                moment_engine=MomentEngines(self._settings.infrelay(request.owner).complete)(
                     config, definitions
                 ),
             ).run(run)

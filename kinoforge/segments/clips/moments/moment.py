@@ -4,9 +4,7 @@ from typing import Any, Dict, Iterable
 
 
 class Moment:
-    """Typed view over one moment dict. The dict stays the wire/storage shape (extra keys a
-    caller or provider added ride through untouched); this owns the span arithmetic and
-    invariants (duration == end - start) that stages used to redo inline."""
+    """Typed view over one moment dict."""
 
     __slots__ = ("data",)
 

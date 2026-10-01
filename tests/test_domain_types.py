@@ -5,10 +5,9 @@ from __future__ import annotations
 import pytest
 
 from kinoforge.contract import ModelRef
+from kinoforge.segments.clips.moments.ai_engine import MomentTuning
 from kinoforge.segments.clips.moments.moment import Moment
-from kinoforge.segments.clips.moments.scoring import MomentTuning
 from kinoforge.segments.story.media.ceiling import PromptCeiling, limit_from_error
-
 
 # --- ModelRef -------------------------------------------------------------
 

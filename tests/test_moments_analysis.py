@@ -1,16 +1,15 @@
-"""Moment analysis coercion: neutral fallbacks and normalizing a parsed model object."""
+"""AI analysis coercion: neutral fallback and normalizing a parsed model object."""
 
 from __future__ import annotations
 
-from kinoforge.segments.clips.moments.analysis import MomentAnalysis
+from kinoforge.segments.clips.moments.ai_engine import AiMomentEngine
 
-fallback_analyses = MomentAnalysis.fallback
-normalize_analysis = MomentAnalysis.normalize
+normalize_analysis = AiMomentEngine.analysis
 
 
 def test_fallback_analyses_keeps_boundaries_at_middling_score():
     batch = [{"start": 1.0, "end": 4.0}, {"start": 5.0, "end": 9.0}]
-    out = fallback_analyses(batch)
+    out = [normalize_analysis({}, m, (0.0, 0.0)) for m in batch]
     assert [a["start"] for a in out] == [1.0, 5.0]
     assert all(a["worthy"] and a["score"] == 60.0 and a["reason"] == "fallback" for a in out)
 
@@ -39,7 +38,6 @@ def test_normalize_string_worthy_is_coerced():
 
 
 def test_normalize_keeps_original_boundaries_when_window_span_too_small():
-    # ne - ns < 2.0 after clamping -> fall back to the moment's own boundaries.
     moment = {"start": 10.0, "end": 40.0}
     out = normalize_analysis({"start": 1, "end": 1.5}, moment, window=(0.0, 50.0))
     assert out["start"] == 10.0 and out["end"] == 40.0

@@ -7,8 +7,7 @@ from kinoforge.observ import active
 
 
 class MomentFilter:
-    """Keeps only clips that stand alone. Bound to one language, it runs seven rejection rules
-    against each candidate; a moment that trips any rule requires external context and is cut."""
+    """Keeps only clips that stand alone."""
 
     _TOPIC_PATTERNS: Dict[str, List[str]] = {
         "english": [
@@ -142,7 +141,6 @@ class MomentFilter:
         """Run the 7 rejection rules against one moment. Empty list means keep it."""
         text = moment["text"]
 
-        # First 2s of speech, widened to 4s when the opening 2s is silent.
         first_2s_text = self.window_text(transcript, moment["start"], moment["start"] + 2)
         if not first_2s_text:
             first_2s_text = self.window_text(transcript, moment["start"], moment["start"] + 4)

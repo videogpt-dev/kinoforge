@@ -6,14 +6,6 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-def _file_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
-    digest = hashlib.md5()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(chunk_size), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 class TranscriptCache:
     """Content-addressed transcripts: keyed on the media file's MD5 plus model and language,
     so the same input and settings reuse one transcript even after the file moves."""
@@ -23,10 +15,18 @@ class TranscriptCache:
 
     def path_for(self, media: Path, model: str, language: Optional[str]) -> Path:
         try:
-            digest = _file_md5(media)
+            digest = self._md5(media)
         except OSError:
             digest = hashlib.md5(str(media).encode("utf-8")).hexdigest()
         return self._root / f"{digest}_{model}_{language or 'auto'}.json"
+
+    @staticmethod
+    def _md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
+        digest = hashlib.md5()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(chunk_size), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     @staticmethod
     def load(path: Path) -> Optional[List[Dict]]:

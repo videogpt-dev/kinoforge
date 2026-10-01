@@ -4,12 +4,8 @@ regression guard for the bug where an empty options.moment_route silently forced
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip("httpx")  # MomentEngines imports the infrelay client
-
-from kinoforge.schemas import ClipsOptionsRequest  # noqa: E402
-from kinoforge.service.runtimes.moment_engines import MomentEngines  # noqa: E402
+from kinoforge.schemas import ClipsOptionsRequest
+from kinoforge.segments.clips.moments.engines import MomentEngines
 
 _ROUTE = {"provider": "cloud", "model": "auto"}
 

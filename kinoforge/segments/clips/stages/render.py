@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
-from kinoforge.segments.clips.render.clip_processor import extract_clips
+from kinoforge.segments.clips.render.clip_processor import ClipCutter
 from kinoforge.segments.clips.render.formatter import VariantFormatter
 from kinoforge.segments.clips.render.media import AspectRatio
 from kinoforge.segments.clips.run import ClipRun, ClipStage, StageStatus
@@ -28,7 +28,7 @@ class Render:
                 run.stage(ClipStage.CLIPS, StageStatus.FAILED)
                 run.fail("clip render requires input.video_path (audio-only run)")
                 return False
-            if self._render(run, work):
+            if self._render(run, run.video_path, work):
                 self._place(run, work)
                 run.stage(ClipStage.CLIPS, StageStatus.DONE)
         except Exception as exc:
@@ -44,12 +44,11 @@ class Render:
     def _formats(run: ClipRun) -> List[str]:
         return [str(f) for f in run.config["formats"]] or [AspectRatio.PORTRAIT.value]
 
-    def _render(self, run: ClipRun, work: Path) -> bool:
-        """False when cancelled between the cut and the format pass."""
+    def _render(self, run: ClipRun, video: Path, work: Path) -> bool:
         config, used = run.config, run.data["used_moments"]
-        clip_paths = extract_clips(
-            run.video_path, used, work / "clips", config["quality"],
-            max_workers=config["processing"]["max_workers"], meter=run.meter,
+        clip_paths = ClipCutter(video, config["quality"]).cut_all(
+            used, work / "clips", max_workers=config["processing"]["max_workers"],
+            meter=run.meter,
         )
         if run.stopped(ClipStage.CLIPS):
             return False
@@ -65,7 +64,6 @@ class Render:
 
     @staticmethod
     def _rendered_file(work: Path, index: int, first_format: str) -> Optional[Path]:
-        """The clip's primary-format render, else any format, else the raw cut."""
         formatted = work / "formatted"
         slug = AspectRatio(first_format).slug
         for pattern_dir, pattern in (
@@ -83,7 +81,7 @@ class Render:
         placed: List[str] = []
         for index, clip_id in enumerate(run.clip_ids, 1):
             rendered = self._rendered_file(work, index, first_format) if clip_id else None
-            if rendered is None:
+            if clip_id is None or rendered is None:
                 continue
             destination = run.workdir / "artifacts" / clip_id / "clip.mp4"
             destination.parent.mkdir(parents=True, exist_ok=True)

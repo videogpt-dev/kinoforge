@@ -1,5 +1,3 @@
-"""Transcription on the gateway's on-box faster-whisper, with a content-addressed cache."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from kinoforge.contract import Meter, MeterAction, ModelRef
 from kinoforge.observ import active
-from kinoforge.segments.clips.render import ffmpeg
+from kinoforge.segments.clips.render.ffmpeg import Ffmpeg, FfmpegError
 from kinoforge.segments.clips.transcription.cache import TranscriptCache
 
 TranscribeBytes = Callable[..., Tuple[List[Dict], Dict]]
@@ -17,21 +15,6 @@ _AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a"}
 
 class TranscriptionError(RuntimeError):
     pass
-
-
-def extract_audio(video_path: Path) -> Path:
-    """16 kHz mp3 next to the source for upload; the source itself when it is already audio
-    or extraction fails (the gateway can still decode it)."""
-    if video_path.suffix.lower() in _AUDIO_SUFFIXES:
-        return video_path
-    audio_path = video_path.parent / f"{video_path.stem}_temp.mp3"
-    try:
-        ffmpeg.run(["-i", str(video_path), "-vn", "-acodec", "libmp3lame", "-b:a", "192k",
-                    "-ar", "16000", str(audio_path)], timeout=300)
-        return audio_path
-    except ffmpeg.FfmpegError as exc:
-        active().warning(f"  Audio extraction failed, uploading the source: {exc}")
-        return video_path
 
 
 class Transcriber:
@@ -51,8 +34,22 @@ class Transcriber:
         self._transcribe_bytes = transcribe_bytes
         self._meter = meter
 
+    @staticmethod
+    def extract_audio(video_path: Path) -> Path:
+        """16 kHz mp3 next to the source for upload; the source itself when it is already
+        audio or extraction fails (the gateway can still decode it)."""
+        if video_path.suffix.lower() in _AUDIO_SUFFIXES:
+            return video_path
+        audio_path = video_path.parent / f"{video_path.stem}_temp.mp3"
+        try:
+            Ffmpeg.run(["-i", str(video_path), "-vn", "-acodec", "libmp3lame", "-b:a", "192k",
+                        "-ar", "16000", str(audio_path)], timeout=300)
+            return audio_path
+        except FfmpegError as exc:
+            active().warning(f"  Audio extraction failed, uploading the source: {exc}")
+            return video_path
+
     def _tuning(self) -> Dict[str, Any]:
-        """The on-box faster-whisper knobs the gateway reads."""
         keys = ("device", "compute_type", "cpu_threads", "beam_size", "vad")
         return {key: self._settings.get(key) for key in keys}
 
@@ -63,8 +60,7 @@ class Transcriber:
         language: Optional[str] = None,
         output_dir: Optional[Path] = None,
     ) -> List[Dict]:
-        """Timed segments. A cached transcript for the same file/model/language is reused (and
-        not billed); cached under <output_dir>/transcripts, else the injected cache dir."""
+        """Timed segments."""
         model = model_size or str(self._settings["model"])
         cache = TranscriptCache(Path(output_dir) / "transcripts" if output_dir else self._cache_dir)
         cache_path = cache.path_for(video_path, model, language)
@@ -95,7 +91,7 @@ class Transcriber:
 
     def _transcribe(self, video_path: Path, model: str, language: Optional[str]) -> List[Dict]:
         active().info(f"  Transcribing with faster-whisper (gateway, {model})...")
-        audio_path = extract_audio(video_path)
+        audio_path = self.extract_audio(video_path)
         try:
             segments, meta = self._transcribe_bytes(
                 audio_path.read_bytes(), ModelRef("whisper", model or "turbo"),
@@ -110,8 +106,6 @@ class Transcriber:
         return segments
 
     def _bill(self, segments: List[Dict], model: str) -> None:
-        """Charge the audio actually transcribed, priced by model (a cache hit never gets
-        here, so re-running a job does not bill work nobody did)."""
         if self._meter:
             minutes = max(float(s.get("end") or 0.0) for s in segments) / 60.0
             self._meter(MeterAction.TRANSCRIBE_MINUTE, minutes, variant=model.strip())

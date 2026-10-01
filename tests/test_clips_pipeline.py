@@ -25,8 +25,7 @@ class _Engine:
 @pytest.fixture(autouse=True)
 def _probe(monkeypatch):
     probe = {"width": 640, "height": 360, "fps": 25.0, "duration": 30.0}
-    monkeypatch.setattr("kinoforge.segments.clips.project.get_video_metadata", lambda _p: probe)
-    monkeypatch.setattr("kinoforge.segments.clips.pipeline.get_video_metadata", lambda _p: probe)
+    monkeypatch.setattr("kinoforge.segments.clips.render.ffmpeg.Ffmpeg.probe", lambda _p: probe)
 
 
 def _pipeline(transcribed: list) -> ClipsPipeline:

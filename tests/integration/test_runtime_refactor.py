@@ -15,11 +15,12 @@ from kinoforge.inference import infrelay as infrelay_module  # noqa: E402
 from kinoforge.observ import bind, build_logger, reset  # noqa: E402
 from kinoforge.schemas import SegmentStatus  # noqa: E402
 from kinoforge.segments.clips.moments.ai_engine import AiMomentEngine  # noqa: E402
+from kinoforge.segments.clips.moments.engines import MomentEngines  # noqa: E402
 from kinoforge.segments.clips.moments.offline_engine import OfflineMomentEngine  # noqa: E402
 from kinoforge.segments.clips.transcription import TranscriptionError  # noqa: E402
 from kinoforge.service.discovery import SegmentCatalog  # noqa: E402
-from kinoforge.service.runtimes.moment_engines import MomentEngines  # noqa: E402
-from kinoforge.service.runtimes.transcription import GatewayTranscription  # noqa: E402
+from kinoforge.service.runtimes.transcription import GatewayTranscriber  # noqa: E402
+from kinoforge.service.settings import ServiceSettings  # noqa: E402
 
 
 class _Response:
@@ -83,7 +84,7 @@ def test_missing_url_fails_loudly():
         InfrelayClient("").complete(ModelRef("op"), "p", max_tokens=1, temperature=0)
 
 
-# --- GatewayTranscription -------------------------------------------------
+# --- GatewayTranscriber ---------------------------------------------------
 
 class _FailingClient:
     def transcribe(self, audio, ref, **kwargs):
@@ -92,7 +93,9 @@ class _FailingClient:
 
 def test_gateway_failure_surfaces_as_transcription_error():
     with pytest.raises(TranscriptionError, match="gateway down"):
-        GatewayTranscription(_FailingClient())(b"audio", ModelRef("whisper", "base"))
+        transcriber = GatewayTranscriber(ServiceSettings(), "", {"model": "base"})
+        transcriber._infrelay = _FailingClient()
+        transcriber._gateway(b"audio", ModelRef("whisper", "base"))
 
 
 # --- MomentEngines --------------------------------------------------------
@@ -101,7 +104,7 @@ _CONFIG = {"min_length": 20, "max_length": 60, "scoring": {}}
 
 
 def _engine(config):
-    return MomentEngines(InfrelayClient("http://gw"))(config, DefinitionBundle.empty())
+    return MomentEngines(InfrelayClient("http://gw").complete)(config, DefinitionBundle.empty())
 
 
 def test_ai_route_builds_the_ai_engine_named_by_route():

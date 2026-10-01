@@ -1,6 +1,3 @@
-"""Format clips to platform aspect ratios: letterbox or blurred pad (never crop), optional
-burned captions, optional mute, NVENC with a libx264 fallback."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,42 +7,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from kinoforge.contract import Meter, MeterAction
 from kinoforge.observ import active
 from kinoforge.segments.clips.moments.moment import Moment
-from kinoforge.segments.clips.render import ffmpeg
 from kinoforge.segments.clips.render.captions import AssCaptions, CaptionWindow
+from kinoforge.segments.clips.render.ffmpeg import Ffmpeg, FfmpegError
 from kinoforge.segments.clips.render.media import AspectRatio, FillStyle
-from kinoforge.segments.clips.render.parallel import ordered_map
-from kinoforge.segments.clips.render.probe import get_video_metadata
 
 _AUDIO = ["-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
-
-
-def _scale(width: int, height: int) -> str:
-    return f"scale={width}:{height},{ffmpeg.GRADE}"
-
-
-def _letterbox(width: int, height: int) -> str:
-    return (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,{ffmpeg.GRADE}")
-
-
-def _blurred_pad(width: int, height: int) -> str:
-    """Fit over a blurred copy of itself. `split` keeps it a single-input graph -vf accepts."""
-    return (f"split=2[main][blur];[blur]scale={width}:{height},boxblur=20:1[bg];"
-            f"[main]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
-            f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{ffmpeg.GRADE}")
-
-
-def fit_filter(size: Tuple[int, int], source_ar: float, fill: Optional[FillStyle]) -> str:
-    """A forced fill wins; else same shape scales, wider letterboxes, taller gets a blur pad."""
-    width, height = size
-    if fill is FillStyle.BLUR:
-        return _blurred_pad(width, height)
-    if fill is FillStyle.BARS:
-        return _letterbox(width, height)
-    target_ar = width / height
-    if abs(source_ar - target_ar) < 0.01:
-        return _scale(width, height)
-    return _letterbox(width, height) if source_ar > target_ar else _blurred_pad(width, height)
 
 
 @dataclass(frozen=True)
@@ -56,16 +22,42 @@ class ClipFormatter:
     use_gpu: bool = False
     fill: Optional[FillStyle] = None
 
+    @classmethod
+    def fit_filter(cls, size: Tuple[int, int], source_ar: float,
+                   fill: Optional[FillStyle]) -> str:
+        """A forced fill wins; else same shape scales, wider letterboxes, taller gets a blur pad."""
+        width, height = size
+        if fill is FillStyle.BLUR:
+            return cls._blurred_pad(width, height)
+        if fill is FillStyle.BARS:
+            return cls._letterbox(width, height)
+        target_ar = width / height
+        if abs(source_ar - target_ar) < 0.01:
+            return f"scale={width}:{height},{Ffmpeg.GRADE}"
+        if source_ar > target_ar:
+            return cls._letterbox(width, height)
+        return cls._blurred_pad(width, height)
+
+    @staticmethod
+    def _letterbox(width: int, height: int) -> str:
+        return (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,{Ffmpeg.GRADE}")
+
+    @staticmethod
+    def _blurred_pad(width: int, height: int) -> str:
+        return (f"split=2[main][blur];[blur]scale={width}:{height},boxblur=20:1[bg];"
+                f"[main]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
+                f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{Ffmpeg.GRADE}")
+
     def format(
         self, source: Path, output: Path, aspect: str, source_ar: float,
         captions: Optional[CaptionWindow] = None,
     ) -> bool:
         size = AspectRatio(aspect).size
-        video_filter = fit_filter(size, source_ar, self.fill)
+        video_filter = self.fit_filter(size, source_ar, self.fill)
         if captions is not None:
             ass_path = output.with_suffix(".ass")
             if AssCaptions(*size).write(captions, ass_path):
-                # ':' and "'" are filtergraph separators inside the ass filter argument.
                 escaped = (str(ass_path).replace("\\", "\\\\").replace(":", "\\:")
                            .replace("'", "\\'"))
                 video_filter = f"{video_filter},ass='{escaped}'"
@@ -76,10 +68,10 @@ class ClipFormatter:
         attempts = [True, False] if self.use_gpu else [False]
         for gpu in attempts:
             try:
-                ffmpeg.run(["-i", str(source), "-vf", video_filter, *ffmpeg.encode_args(gpu),
+                Ffmpeg.run(["-i", str(source), "-vf", video_filter, *Ffmpeg.encode_args(gpu),
                             *audio, str(output)], timeout=300)
                 return output.exists()
-            except ffmpeg.FfmpegError as exc:
+            except FfmpegError as exc:
                 if gpu:
                     active().warning("      GPU encode failed, falling back to libx264")
                 else:
@@ -115,7 +107,7 @@ class VariantFormatter:
         output_dir.mkdir(parents=True, exist_ok=True)
         items = [(i, clip, moment, output_dir)
                  for i, (clip, moment) in enumerate(zip(clip_paths, moments), 1)]
-        batches = ordered_map(self._format_one, items, self._workers)
+        batches = Ffmpeg.parallel(self._format_one, items, self._workers)
         formatted: Dict[str, List[Path]] = {str(f): [] for f in self._formats}
         for produced in batches:
             for aspect, path, ok in produced:
@@ -128,7 +120,7 @@ class VariantFormatter:
         self, index: int, clip: Path, moment: Dict[str, Any], output_dir: Path
     ) -> List[Tuple[AspectRatio, Path, bool]]:
         active().info(f"  Processing clip {index}...")
-        source_ar = get_video_metadata(clip)["aspect_ratio"]
+        source_ar = Ffmpeg.probe(clip)["aspect_ratio"]
         view = Moment(moment)
         captions = (CaptionWindow(self._transcript, view.start, view.end)
                     if self._burn else None)
@@ -142,8 +134,6 @@ class VariantFormatter:
 
     def _bill(self, batches: List[List[Tuple]], formatted: Dict[str, List[Path]],
               clips: int) -> None:
-        # Every clip is rendered in one format as part of the export; each additional aspect
-        # ratio is a second encode and its own line.
         if not self._meter:
             return
         captioned = sum(1 for produced in batches if self._burn and any(ok for *_, ok in produced))

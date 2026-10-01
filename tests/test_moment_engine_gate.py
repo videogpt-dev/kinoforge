@@ -3,11 +3,7 @@ offline (True) means no LLM is constructed or called for moment selection."""
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip("httpx")  # MomentEngines imports the infrelay client
-
-from kinoforge.service.runtimes.moment_engines import MomentEngines  # noqa: E402
+from kinoforge.segments.clips.moments.engines import MomentEngines
 
 prefers_offline = MomentEngines.prefers_offline
 _ROUTE = {"provider": "openrouter", "model": "deepseek/deepseek-chat"}

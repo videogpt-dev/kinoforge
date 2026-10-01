@@ -1,12 +1,10 @@
-"""Transcript-boundary snapping and small extractor utilities."""
+"""Transcript snapping, candidate windows, language guess."""
 
 from __future__ import annotations
 
-from kinoforge.segments.clips.moments.extractor import TranscriptText
+from kinoforge.segments.clips.moments.transcript import TranscriptText
 
 detect_language = TranscriptText.detect_language
-format_time = TranscriptText.format_time
-get_text_between_times = TranscriptText.text_between
 snap_to_transcript = TranscriptText.snap
 
 
@@ -40,19 +38,22 @@ def test_snap_trims_long_pick_to_max_length():
     assert text == "a"
 
 
-# --- get_text_between_times -----------------------------------------------
+# --- windows --------------------------------------------------------------
 
-def test_text_between_times_only_fully_contained():
-    text = get_text_between_times(_segs(), 4.0, 11.0)
-    assert text == "b"  # only [5,10] fully inside [4,11]
+def _speech(n):
+    return [{"start": i * 5.0, "end": i * 5.0 + 5, "text": "one two three four five"}
+            for i in range(n)]
 
 
-# --- format_time ----------------------------------------------------------
+def test_windows_are_non_overlapping_and_sized():
+    windows = TranscriptText.windows(_speech(12), 10, 20)
+    assert [(w["start"], w["end"]) for w in windows][:2] == [(0.0, 10.0), (10.0, 20.0)]
+    assert all(10 <= w["end"] - w["start"] <= 20 for w in windows)
 
-def test_format_time_mm_ss():
-    assert format_time(5) == "00:05"
-    assert format_time(65) == "01:05"
-    assert format_time(600) == "10:00"
+
+def test_windows_skip_short_text():
+    short = [{"start": 0, "end": 12, "text": "hi"}]
+    assert TranscriptText.windows(short, 10, 20) == []
 
 
 # --- detect_language ------------------------------------------------------

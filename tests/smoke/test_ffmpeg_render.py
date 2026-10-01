@@ -17,17 +17,19 @@ pytestmark = pytest.mark.skipif(
 
 from kinoforge.contract import MeterAction  # noqa: E402
 from kinoforge.segments.clips.moments.moment import Moment  # noqa: E402
+from kinoforge.segments.clips.moments.offline_engine import OfflineMomentEngine  # noqa: E402
 from kinoforge.segments.clips.pipeline import ClipsPipeline  # noqa: E402
 from kinoforge.segments.clips.render.base_render import BaseCut  # noqa: E402
 from kinoforge.segments.clips.render.captions import CaptionWindow  # noqa: E402
-from kinoforge.segments.clips.render.clip_processor import extract_clips  # noqa: E402
+from kinoforge.segments.clips.render.clip_processor import ClipCutter  # noqa: E402
+from kinoforge.segments.clips.render.ffmpeg import Ffmpeg  # noqa: E402
 from kinoforge.segments.clips.render.formatter import (  # noqa: E402
     ClipFormatter,
     VariantFormatter,
 )
 from kinoforge.segments.clips.render.media import FillStyle, MasterQuality  # noqa: E402
-from kinoforge.segments.clips.render.probe import get_video_metadata  # noqa: E402
 from kinoforge.segments.clips.run import ClipRun  # noqa: E402
+from kinoforge.segments.clips.transcription import Transcriber  # noqa: E402
 from tests.support import capturing_logger  # noqa: E402
 
 _TRANSCRIPT = [
@@ -73,7 +75,7 @@ def _meter(log: list):
 # --- probe ----------------------------------------------------------------
 
 def test_probe_reads_real_metadata(source):
-    info = get_video_metadata(source)
+    info = Ffmpeg.probe(source)
     assert (info["width"], info["height"]) == (640, 360)
     assert info["fps"] == pytest.approx(25.0)
     assert info["duration"] == pytest.approx(6.0, abs=0.2)
@@ -81,18 +83,18 @@ def test_probe_reads_real_metadata(source):
 
 
 def test_probe_falls_back_on_missing_file(tmp_path):
-    info = get_video_metadata(tmp_path / "missing.mp4")
+    info = Ffmpeg.probe(tmp_path / "missing.mp4")
     assert (info["width"], info["height"], info["duration"]) == (1920, 1080, 0)
 
 
 # --- raw cuts -------------------------------------------------------------
 
-def test_extract_clips_cuts_exact_spans_even_off_keyframe(source, tmp_path):
+def test_cut_all_cuts_exact_spans_even_off_keyframe(source, tmp_path):
     """3.0-5.0 starts off the only keyframe: a stream copy would carry 3s of pre-roll (5s
     clip). The cutter must detect the drift and re-encode to the exact 2s."""
     metered: list = []
-    clips = extract_clips(
-        source, [Moment.new(0, 2), Moment.new(3, 5)], tmp_path / "raw", "low",
+    clips = ClipCutter(source, "low").cut_all(
+        [Moment.new(0, 2), Moment.new(3, 5)], tmp_path / "raw",
         max_workers=2, meter=_meter(metered),
     )
     assert [c.name for c in clips] == ["clip_01_raw.mp4", "clip_02_raw.mp4"]
@@ -101,8 +103,8 @@ def test_extract_clips_cuts_exact_spans_even_off_keyframe(source, tmp_path):
     assert metered == [(MeterAction.CLIP_RENDER, 2)]
 
 
-def test_extract_clips_skips_a_failed_cut(tmp_path):
-    assert extract_clips(tmp_path / "missing.mp4", [Moment.new(0, 1)], tmp_path / "raw") == []
+def test_cut_all_skips_a_failed_cut(tmp_path):
+    assert ClipCutter(tmp_path / "missing.mp4").cut_all([Moment.new(0, 1)], tmp_path / "raw") == []
 
 
 # --- formatting -----------------------------------------------------------
@@ -149,7 +151,7 @@ def test_unknown_aspect_ratio_is_rejected(source, tmp_path):
 
 def test_variants_every_format_parallel_and_metered(source, tmp_path):
     moments = [Moment.new(0, 2), Moment.new(2, 4)]
-    raw = extract_clips(source, moments, tmp_path / "raw")
+    raw = ClipCutter(source).cut_all(moments, tmp_path / "raw")
     metered: list = []
     out = VariantFormatter(
         ["9:16", "1:1"], _TRANSCRIPT,
@@ -201,7 +203,7 @@ def test_clips_pipeline_end_to_end(source, tmp_path):
         video_path=source, meter=_meter(metered),
     )
     ClipsPipeline(
-        transcribe_video=lambda *_a, **_k: list(_TRANSCRIPT), moment_engine=None,
+        transcribe_video=lambda *_a, **_k: list(_TRANSCRIPT), moment_engine=OfflineMomentEngine(),
     ).run(run)
     assert run.status == "ok", run.error
     assert len(run.artifacts) == 2
@@ -217,14 +219,13 @@ def test_clips_pipeline_end_to_end(source, tmp_path):
 
 
 def test_extract_audio_makes_16k_mp3_and_passes_audio_through(source, tmp_path):
-    from kinoforge.segments.clips.transcription.engine import extract_audio
 
     copy = tmp_path / "v.mp4"
     shutil.copy(source, copy)
-    audio = extract_audio(copy)
+    audio = Transcriber.extract_audio(copy)
     assert audio.suffix == ".mp3" and audio.exists()
     rate = json.loads(subprocess.run(
         ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(audio)],
         check=True, capture_output=True).stdout)["streams"][0]["sample_rate"]
     assert rate == "16000"
-    assert extract_audio(audio) == audio  # already audio: untouched
+    assert Transcriber.extract_audio(audio) == audio  # already audio: untouched

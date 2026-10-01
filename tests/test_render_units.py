@@ -9,14 +9,14 @@ import pytest
 
 from kinoforge.segments.clips.render.base_render import BaseCut
 from kinoforge.segments.clips.render.captions import AssCaptions, CaptionWindow
-from kinoforge.segments.clips.render.formatter import fit_filter
+from kinoforge.segments.clips.render.ffmpeg import Ffmpeg
+from kinoforge.segments.clips.render.formatter import ClipFormatter
 from kinoforge.segments.clips.render.media import (
     AspectRatio,
     ClipQuality,
     FillStyle,
     MasterQuality,
 )
-from kinoforge.segments.clips.render.parallel import ordered_map
 from kinoforge.service.executions import ExecutionConflict, ExecutionRegistry
 
 
@@ -43,7 +43,7 @@ def test_low_quality_is_really_low():
     (16 / 9, FillStyle.BLUR, "boxblur"),                          # forced blur
 ])
 def test_fit_filter_choice(source_ar, fill, marker):
-    assert marker in fit_filter((1080, 1920), source_ar, fill)
+    assert marker in ClipFormatter.fit_filter((1080, 1920), source_ar, fill)
 
 
 def test_captions_clip_relative_and_skip_outside_window(tmp_path):
@@ -72,10 +72,10 @@ def test_base_cut_crop_stays_even_and_inside_frame():
     assert BaseCut(Path("s"), Path("o"), 0, 1, (640, 360)).crop_filter() == "crop=640:360:0:0"
 
 
-def test_ordered_map_keeps_input_order_in_parallel():
+def test_parallel_keeps_input_order_in_parallel():
     items = [(n,) for n in range(20)]
-    assert ordered_map(lambda n: n * n, items, max_workers=4) == [n * n for n in range(20)]
-    assert ordered_map(lambda n: n, [(1,)], max_workers=4) == [1]
+    assert Ffmpeg.parallel(lambda n: n * n, items, max_workers=4) == [n * n for n in range(20)]
+    assert Ffmpeg.parallel(lambda n: n, [(1,)], max_workers=4) == [1]
 
 
 def test_running_holds_the_lease_and_releases_it():

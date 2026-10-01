@@ -1,12 +1,10 @@
-"""Burned-in captions: clip-relative ASS subtitles for one moment window."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
-_MAX_CHUNK_CHARS = 42  # about two lines at the caption font size
+_MAX_CHUNK_CHARS = 42
 
 
 @dataclass(frozen=True)
@@ -19,9 +17,7 @@ class CaptionWindow:
 
 
 class AssCaptions:
-    """Writes the window as an ASS file sized to the output frame. PlayResX/Y are pinned to the
-    output so Fontsize is real pixels (an SRT scales against libass' 288px default, blowing
-    captions up ~6x); font, outline and margins scale with height, bottom-centred."""
+    """Writes the window as an ASS file sized to the output frame."""
 
     def __init__(self, width: int, height: int) -> None:
         self._width = width
@@ -48,8 +44,6 @@ class AssCaptions:
         return events
 
     def _timed_chunks(self, text: str, start: float, end: float) -> List[str]:
-        """Split a long line into ~2-line chunks, each timed in proportion to its length, so a
-        caption never blankets the frame."""
         chunks = self.chunks(text)
         total = sum(len(c) for c in chunks) or 1
         lines, cursor = [], start

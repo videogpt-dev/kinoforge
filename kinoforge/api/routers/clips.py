@@ -5,13 +5,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from kinoforge.api.paths import require_available, require_clips, shared_path
 from kinoforge.contract import JobKind
-from kinoforge.segments.clips.render.base_render import BaseCut
-from kinoforge.segments.clips.render.formatter import ClipFormatter
-from kinoforge.segments.clips.render.media import FillStyle, MasterQuality
-from kinoforge.segments.clips.render.probe import get_video_metadata
-from kinoforge.segments.clips.transcription import align_words
-from kinoforge.service.executions import executions
 from kinoforge.schemas import (
     AlignmentResponse,
     AlignRequest,
@@ -24,9 +19,14 @@ from kinoforge.schemas import (
     MediaOperationResponse,
     PathRequest,
 )
-from kinoforge.api.paths import require_available, require_clips, shared_path
+from kinoforge.segments.clips.render.base_render import BaseCut
+from kinoforge.segments.clips.render.ffmpeg import Ffmpeg
+from kinoforge.segments.clips.render.formatter import ClipFormatter
+from kinoforge.segments.clips.render.media import FillStyle, MasterQuality
+from kinoforge.segments.clips.transcription import WordAligner
+from kinoforge.service.executions import executions
 from kinoforge.service.runtimes import ClipsRuntime
-from kinoforge.service.runtimes.transcription import gateway_transcriber
+from kinoforge.service.runtimes.transcription import GatewayTranscriber
 from kinoforge.service.settings import ServiceSettings
 
 router = APIRouter()
@@ -79,7 +79,7 @@ def cancel_execution(code_name: JobKind, execution_id: str) -> dict:
 )
 def probe_media(code_name: JobKind, request: PathRequest) -> dict:
     require_clips(code_name)
-    return get_video_metadata(shared_path(request.path, must_exist=True))
+    return Ffmpeg.probe(shared_path(request.path, must_exist=True))
 
 
 @router.post(
@@ -114,7 +114,7 @@ def format_media(code_name: JobKind, request: FormatRequest) -> dict:
     output = shared_path(request.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     ok = ClipFormatter(fill=FillStyle(request.fill)).format(
-        source, output, request.aspect_ratio, get_video_metadata(source)["aspect_ratio"]
+        source, output, request.aspect_ratio, Ffmpeg.probe(source)["aspect_ratio"]
     )
     return {"ok": ok, "path": str(output) if ok else ""}
 
@@ -132,11 +132,9 @@ def format_media(code_name: JobKind, request: FormatRequest) -> dict:
 def align_transcription(code_name: JobKind, request: AlignRequest) -> dict:
     require_clips(code_name)
     source = shared_path(request.path, must_exist=True)
-    engine = gateway_transcriber(
-        ServiceSettings.from_env(), request.owner, request.transcription
-    )
+    engine = GatewayTranscriber(ServiceSettings.from_env(), request.owner, request.transcription)
     segments = engine.transcribe_words(source, request.language or None)
     return {
         "segments": segments,
-        "aligned": align_words(request.text, segments, request.duration),
+        "aligned": WordAligner.align(request.text, segments, request.duration),
     }

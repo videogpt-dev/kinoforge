@@ -1,5 +1,3 @@
-"""Typed vocabularies for clip rendering: output aspect ratios, encode qualities, fill styles."""
-
 from __future__ import annotations
 
 from enum import StrEnum

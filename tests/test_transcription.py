@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from kinoforge.contract import MeterAction, ModelRef
-from kinoforge.segments.clips.transcription import Transcriber, TranscriptionError, align_words
+from kinoforge.segments.clips.transcription import Transcriber, TranscriptionError, WordAligner
 from kinoforge.segments.clips.transcription.cache import TranscriptCache
 
 _SEGMENTS = [{"start": 0.0, "end": 30.0, "text": "a"}, {"start": 30.0, "end": 90.0, "text": "b"}]
@@ -94,18 +94,18 @@ def _w(word, start, end):
 
 def test_align_keeps_script_spelling_and_heard_timing():
     heard = [{"words": [_w("the", 0, .3), _w("ai", .3, .6), _w("todo", .6, 1.0)]}]
-    words = align_words("The AI to-do", heard, 1.2)[0]["words"]
+    words = WordAligner.align("The AI to-do", heard, 1.2)[0]["words"]
     assert [w["word"] for w in words] == ["The", "AI", "to-do"]
     assert [(w["start"], w["end"]) for w in words] == [(0, .3), (.3, .6), (.6, 1.0)]
 
 
 def test_align_interpolates_missed_words_between_neighbours():
     heard = [{"words": [_w("one", 0, .5), _w("three", 1.0, 1.5)]}]
-    words = align_words("one two three", heard, 2.0)[0]["words"]
+    words = WordAligner.align("one two three", heard, 2.0)[0]["words"]
     assert (words[1]["start"], words[1]["end"]) == (0.5, 1.0)
 
 
 def test_align_spreads_evenly_without_timings():
-    words = align_words("a b", [], 2.0)[0]["words"]
+    words = WordAligner.align("a b", [], 2.0)[0]["words"]
     assert [(w["start"], w["end"]) for w in words] == [(0.0, 1.0), (1.0, 2.0)]
-    assert align_words("", [], 2.0) == []
+    assert WordAligner.align("", [], 2.0) == []

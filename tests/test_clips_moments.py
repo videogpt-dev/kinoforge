@@ -10,17 +10,30 @@ from tests.support import make_run, texts
 _BASE = {"min_length": 0, "max_length": 0, "clip_count": 10, "output_dir": "/out", "slug": "s"}
 
 
+class _Engine:
+    name = "stub"
+
+    def discover_moments(self, transcript, min_len, max_len, target_clips):
+        return []
+
+    def filter_moments(self, candidates, transcript):
+        return candidates
+
+    def score_moments(self, moments, transcript):
+        return moments
+
+
 @pytest.fixture(autouse=True)
 def _no_probe(monkeypatch):
     monkeypatch.setattr(
-        "kinoforge.segments.clips.project.get_video_metadata",
+        "kinoforge.segments.clips.render.ffmpeg.Ffmpeg.probe",
         lambda _p: {"width": 640, "height": 360, "fps": 25.0, "duration": 30.0},
     )
 
 
 def _limit(config, ranked):
     run = make_run(config)
-    return Moments(None)._limit(run, ranked), run
+    return Moments(_Engine())._limit(run, ranked), run
 
 
 # --- find + rank ------------------------------------------------------------
@@ -28,7 +41,7 @@ def _limit(config, ranked):
 def test_preset_moments_skip_discovery_and_sort_by_score():
     preset = [{"start": 0.0, "end": 5.0, "score": 10}, {"start": 6.0, "end": 9.0, "score": 90}]
     run = make_run({**_BASE, "preset_moments": preset})
-    assert Moments(None)(run) is True
+    assert Moments(_Engine())(run) is True
     assert [m["score"] for m in run.data["used_moments"]] == [90, 10]
     assert run.data["moments"] is not preset  # copied, not aliased
     assert any("preset moments" in t for t in texts(run.logger))
@@ -38,7 +51,7 @@ def test_preset_moments_skip_discovery_and_sort_by_score():
 def test_preset_missing_score_sorts_last():
     run = make_run({**_BASE, "preset_moments": [{"start": 0, "end": 1}, {"start": 2, "end": 3,
                                                                           "score": 5}]})
-    Moments(None)(run)
+    Moments(_Engine())(run)
     assert [m.get("score") for m in run.data["used_moments"]] == [5, None]
 
 
@@ -56,7 +69,7 @@ def test_engine_discovery_is_used_when_offered():
 def test_stops_when_cancelled():
     run = make_run({**_BASE, "preset_moments": [{"start": 0, "end": 5}]},
                    is_cancelled=lambda: True)
-    assert Moments(None)(run) is False
+    assert Moments(_Engine())(run) is False
     assert run.status == "cancelled"
 
 
@@ -65,7 +78,7 @@ def test_clip_ids_skip_zero_length_and_merge_existing_record():
               {"start": 6, "end": 9, "score": 1}]
     existing = {"moments": [{"start": 20.0, "end": 25.0, "text": "old", "score": 1, "id": 1}]}
     run = make_run({**_BASE, "preset_moments": preset}, record=existing)
-    Moments(None)(run)
+    Moments(_Engine())(run)
     assert run.clip_ids == ["clip_01", None, "clip_03"]
     assert [m["start"] for m in run.record["moments"]] == [20.0, 0.0, 5.0, 6.0]
 

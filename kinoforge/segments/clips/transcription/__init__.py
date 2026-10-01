@@ -1,4 +1,4 @@
-from kinoforge.segments.clips.transcription.alignment import align_words
+from kinoforge.segments.clips.transcription.alignment import WordAligner
 from kinoforge.segments.clips.transcription.engine import Transcriber, TranscriptionError
 
-__all__ = ["Transcriber", "TranscriptionError", "align_words"]
+__all__ = ["Transcriber", "TranscriptionError", "WordAligner"]

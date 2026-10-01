@@ -5,7 +5,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from kinoforge.contract import Meter, _no_meter
+from kinoforge.contract import Meter
 from kinoforge.observ import KinoLogger
 
 Segments = List[Dict[str, Any]]
@@ -25,10 +25,6 @@ class StageStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-def _never() -> bool:
-    return False
-
-
 @dataclass
 class ClipRun:
     """Everything one clips execution reads and writes: inputs, merged config, the state a
@@ -40,8 +36,8 @@ class ClipRun:
     logger: KinoLogger
     video_path: Optional[Path] = None
     audio_path: Optional[Path] = None
-    meter: Meter = _no_meter
-    is_cancelled: Callable[[], bool] = _never
+    meter: Optional[Meter] = None
+    is_cancelled: Optional[Callable[[], bool]] = None
     record: Optional[Dict[str, Any]] = None
     transcript: Segments = field(default_factory=list)
     has_clips: bool = False
@@ -84,7 +80,7 @@ class ClipRun:
 
     def stopped(self, stage: Optional[ClipStage] = None) -> bool:
         """True (and marks the run cancelled) once the caller asked to cancel."""
-        if not self.is_cancelled():
+        if self.is_cancelled is None or not self.is_cancelled():
             return False
         if stage is not None:
             self.stage(stage, StageStatus.CANCELLED)
