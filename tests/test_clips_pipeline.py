@@ -60,6 +60,12 @@ def test_transcript_from_state_is_reused():
     assert "transcribe:skipped" in run.stages
 
 
+def test_transcript_times_are_rounded_to_milliseconds():
+    run = make_run(_CONFIG, transcript=[{"start": 4.6000000000000005, "end": 9.6, "text": "a"}])
+    _pipeline([]).run(run)
+    assert run.data["transcript"] == [{"start": 4.6, "end": 9.6, "text": "a"}]
+
+
 def test_force_transcribes_again_and_fills_state():
     transcribed: list = []
     run = make_run({**_CONFIG, "force": True}, transcript=[{"start": 0, "end": 1, "text": "x"}])

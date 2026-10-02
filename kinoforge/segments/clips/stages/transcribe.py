@@ -18,7 +18,7 @@ class Transcribe:
         run.stage(ClipStage.TRANSCRIBE, StageStatus.RUNNING)
         run.logger.info("Transcribing")
         try:
-            transcript = self._reused(run) or self._fresh(run)
+            transcript = self._rounded(self._reused(run) or self._fresh(run))
         except Exception as exc:
             run.stage(ClipStage.TRANSCRIBE, StageStatus.FAILED)
             run.fail(f"Transcription failed: {exc!s}")
@@ -29,6 +29,11 @@ class Transcribe:
             run.transcript = transcript
         run.logger.success(f"Transcription complete ({len(transcript)} segments)")
         return not run.stopped(ClipStage.TRANSCRIBE)
+
+    @staticmethod
+    def _rounded(transcript: Segments) -> Segments:
+        return [{**s, "start": round(float(s["start"]), 3), "end": round(float(s["end"]), 3)}
+                for s in transcript]
 
     @staticmethod
     def _reused(run: ClipRun) -> Optional[Segments]:
