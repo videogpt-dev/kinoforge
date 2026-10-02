@@ -14,9 +14,11 @@ from kinoforge.inference import InfrelayClient, InfrelayError  # noqa: E402
 from kinoforge.inference import infrelay as infrelay_module  # noqa: E402
 from kinoforge.observ import bind, build_logger, reset  # noqa: E402
 from kinoforge.schemas import SegmentStatus  # noqa: E402
-from kinoforge.segments.clips.moments.ai_engine import AiMomentEngine  # noqa: E402
-from kinoforge.segments.clips.moments.engines import MomentEngines  # noqa: E402
-from kinoforge.segments.clips.moments.offline_engine import OfflineMomentEngine  # noqa: E402
+from kinoforge.segments.clips.moments.finders import (  # noqa: E402
+    AiMomentFinder,
+    MomentFinders,
+    OfflineMomentFinder,
+)
 from kinoforge.segments.clips.transcription import TranscriptionError  # noqa: E402
 from kinoforge.service.discovery import SegmentCatalog  # noqa: E402
 from kinoforge.service.runtimes.transcription import GatewayTranscriber  # noqa: E402
@@ -98,36 +100,36 @@ def test_gateway_failure_surfaces_as_transcription_error():
         transcriber._gateway(b"audio", ModelRef("whisper", "base"))
 
 
-# --- MomentEngines --------------------------------------------------------
+# --- MomentFinders --------------------------------------------------------
 
 _CONFIG = {"min_length": 20, "max_length": 60, "scoring": {}}
 
 
-def _engine(config):
-    return MomentEngines(InfrelayClient("http://gw").complete)(config, DefinitionBundle.empty())
+def _finder(config):
+    return MomentFinders.pick(config, DefinitionBundle.empty(), InfrelayClient("http://gw").complete)
 
 
-def test_ai_route_builds_the_ai_engine_named_by_route():
-    engine = _engine({**_CONFIG, "moment_finder": "auto",
+def test_ai_route_builds_the_ai_finder_named_by_route():
+    finder = _finder({**_CONFIG, "moment_finder": "auto",
                       "moment_route": {"provider": "cloud", "model": "auto"}})
-    assert isinstance(engine, AiMomentEngine)
-    assert engine.name == "cloud/auto"
+    assert isinstance(finder, AiMomentFinder)
+    assert finder.name == "cloud/auto"
 
 
-def test_offline_finder_builds_the_offline_engine_even_with_a_route():
-    engine = _engine({**_CONFIG, "moment_finder": "offline",
+def test_offline_finder_builds_the_offline_finder_even_with_a_route():
+    finder = _finder({**_CONFIG, "moment_finder": "offline",
                       "moment_route": {"provider": "cloud", "model": "auto"}})
-    assert isinstance(engine, OfflineMomentEngine)
+    assert isinstance(finder, OfflineMomentFinder)
 
 
 def test_ai_without_route_warns_loudly_and_falls_back():
     logger = build_logger(segment="clips")
     token = bind(logger)
     try:
-        engine = _engine({**_CONFIG, "moment_finder": "ai"})
+        finder = _finder({**_CONFIG, "moment_finder": "ai"})
     finally:
         reset(token)
-    assert isinstance(engine, OfflineMomentEngine)
+    assert isinstance(finder, OfflineMomentFinder)
     assert any(e["level"] == "warning" and "no moment_route" in e["text"] for e in logger.entries)
 
 

@@ -102,18 +102,18 @@ class VariantFormatter:
         self._meter = meter
 
     def format_all(
-        self, clip_paths: List[Path], moments: List[Dict[str, Any]], output_dir: Path
+        self, clip_paths: List[Optional[Path]], moments: List[Dict[str, Any]], output_dir: Path
     ) -> Dict[str, List[Path]]:
         output_dir.mkdir(parents=True, exist_ok=True)
         items = [(i, clip, moment, output_dir)
-                 for i, (clip, moment) in enumerate(zip(clip_paths, moments), 1)]
+                 for i, (clip, moment) in enumerate(zip(clip_paths, moments), 1) if clip]
         batches = Ffmpeg.parallel(self._format_one, items, self._workers)
         formatted: Dict[str, List[Path]] = {str(f): [] for f in self._formats}
         for produced in batches:
             for aspect, path, ok in produced:
                 if ok:
                     formatted[str(aspect)].append(path)
-        self._bill(batches, formatted, len(clip_paths))
+        self._bill(batches, formatted, len(items))
         return formatted
 
     def _format_one(

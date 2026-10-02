@@ -5,6 +5,8 @@ from typing import Dict, List
 
 from kinoforge.observ import active
 from kinoforge.segments.clips.moments.filter import MomentFilter
+from kinoforge.segments.clips.moments.finders.base import MomentFinder, MomentSpec
+from kinoforge.segments.clips.moments.transcript import TranscriptText
 
 _KEYWORDS = (
     (3.0, ("shocking", "unbelievable", "crazy", "insane", "mind blown", "did not expect",
@@ -30,29 +32,27 @@ _HOOKS = (
 )
 
 
-class OfflineMomentEngine:
-    """Keyless engine: rule-based standalone filter plus energy, keyword and hook text scores.
-    It reads no transcript itself, so its candidates are the transcript windows."""
+class OfflineMomentFinder(MomentFinder):
+    """Keyless: standalone transcript windows, kept and ranked by energy, keyword and hook
+    text scores."""
 
     name = "Offline (Smart)"
 
-    def discover_moments(self, transcript: List[Dict], min_len: float, max_len: float,
-                         target_clips: int) -> List[Dict]:
-        return []
-
-    def filter_moments(self, candidates: List[Dict], transcript: List[Dict]) -> List[Dict]:
-        if not candidates:
-            return []
-        active().info("  Filtering with Offline Smart Analysis...")
-        standalone = MomentFilter.run(candidates, transcript)
-        worthy = [m for m in standalone[:20] if self._worthiness(m.get("text", "")) >= 35]
-        return worthy or standalone[:10]
-
-    def score_moments(self, moments: List[Dict], transcript: List[Dict]) -> List[Dict]:
-        active().info("  Scoring with Offline Smart Analysis...")
+    def find(self, transcript: List[Dict], spec: MomentSpec) -> List[Dict]:
+        active().info("  Finding moments with Offline Smart Analysis...")
+        candidates = self.candidates(transcript, spec)
+        worthy = [m for m in candidates[:20] if self._worthiness(m.get("text", "")) >= 35]
+        moments = worthy or candidates[:10]
         for moment in moments:
             moment["score"] = self._score(moment.get("text", ""))
-        return sorted(moments, key=lambda m: m["score"], reverse=True)
+        return self.ranked(moments)
+
+    @staticmethod
+    def candidates(transcript: List[Dict], spec: MomentSpec) -> List[Dict]:
+        """Transcript windows that stand alone; every window when none do."""
+        windows = TranscriptText.windows(transcript, spec.min_len, spec.max_len)
+        active().info(f"  {len(windows)} candidate windows")
+        return MomentFilter.run(windows, transcript) or windows
 
     def _worthiness(self, text: str) -> float:
         return (self._energy(text) + self._keywords(text) + self._hooks(text) * 1.5

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from kinoforge.segments.clips.moments.finders import MomentFinder
 from kinoforge.segments.clips.pipeline import ClipsPipeline
 from tests.support import make_run
 
@@ -15,10 +16,10 @@ _CONFIG = {"slug": "video", "output_dir": "/out", "min_length": 5, "max_length":
            "clip_count": 1, "analyze_only": True}
 
 
-class _Engine:
+class _Finder(MomentFinder):
     name = "test"
 
-    def discover_moments(self, transcript, min_length, max_length, clip_count):
+    def find(self, transcript, spec):
         return [{"start": 1, "end": 12, "score": 90, "text": "moment"}]
 
 
@@ -33,7 +34,7 @@ def _pipeline(transcribed: list) -> ClipsPipeline:
         transcribed.append(args)
         return list(_TRANSCRIPT)
 
-    return ClipsPipeline(transcribe_video=transcribe_video, moment_engine=_Engine())
+    return ClipsPipeline(transcribe_video=transcribe_video, moment_finder=_Finder())
 
 
 def test_analyze_only_uses_captions_and_skips_rendering():

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from typing import Tuple
-
-from kinoforge.segments.clips.moments.engines import MomentEngine
+from kinoforge.segments.clips.moments.finders import MomentFinder, MomentSpec
 from kinoforge.segments.clips.moments.moment import Moment
-from kinoforge.segments.clips.moments.transcript import TranscriptText
 from kinoforge.segments.clips.project import ProjectRecord
 from kinoforge.segments.clips.run import ClipRun, ClipStage, Segments, StageStatus
 
@@ -12,14 +9,14 @@ from kinoforge.segments.clips.run import ClipRun, ClipStage, Segments, StageStat
 class Moments:
     """Finds, ranks and limits moments, then records them in the project and assigns clip ids."""
 
-    def __init__(self, engine: MomentEngine) -> None:
-        self._engine = engine
+    def __init__(self, finder: MomentFinder) -> None:
+        self._finder = finder
 
     def __call__(self, run: ClipRun) -> bool:
         run.stage(ClipStage.MOMENTS, StageStatus.RUNNING)
         run.logger.info("Finding moments")
         try:
-            moments, discovered = self._find(run)
+            moments = self._find(run)
         except Exception as exc:
             run.stage(ClipStage.MOMENTS, StageStatus.FAILED)
             run.fail(f"Moment extraction failed: {exc!s}")
@@ -32,48 +29,19 @@ class Moments:
             run.stage(ClipStage.MOMENTS, StageStatus.DONE)
             run.logger.warning("No moments extracted from video")
             return False
-        if discovered:
-            ranked = sorted(moments, key=lambda m: Moment(m).score, reverse=True)
-        else:
-            ranked = self._rank(run, moments)
-        used = self._limit(run, ranked)[: run.config["clip_count"]]
+        used = self._limit(run, moments)[: run.config["clip_count"]]
         run.data["used_moments"] = used
         self._persist(run, used)
         run.stage(ClipStage.MOMENTS, StageStatus.DONE)
         return True
 
-    def _find(self, run: ClipRun) -> Tuple[Segments, bool]:
+    def _find(self, run: ClipRun) -> Segments:
         preset = run.config.get("preset_moments")
         if preset:
             run.logger.success(f"Using {len(preset)} preset moments (find skipped)")
-            return [dict(m) for m in preset], True
-        config = run.config
-        moments = self._engine.discover_moments(
-            run.transcript, config["min_length"], config["max_length"], config["clip_count"]
-        )
-        if moments:
-            run.logger.success(f"Read the transcript and chose {len(moments)} moments")
-            return moments, True
-        moments = TranscriptText.windows(run.transcript, config["min_length"],
-                                         config["max_length"])
-        run.logger.success(f"Moment extraction: {len(moments)} candidate windows")
-        return moments, False
-
-    def _rank(self, run: ClipRun, moments: Segments) -> Segments:
-        engine = self._engine
-        try:
-            filtered = engine.filter_moments(moments, run.transcript)
-            if filtered:
-                moments = filtered
-                run.logger.success(f"Filtered moments using {engine.name}")
-        except Exception as exc:
-            run.logger.warning(f"Provider filtering failed: {exc}")
-        run.logger.info("Scoring moments")
-        try:
-            moments = engine.score_moments(moments, run.transcript)
-            run.logger.success(f"Scored moments with {engine.name}")
-        except Exception as exc:
-            run.logger.warning(f"Moment scoring failed: {exc}")
+            return MomentFinder.ranked([dict(m) for m in preset])
+        moments = self._finder.find(run.transcript, MomentSpec.from_config(run.config))
+        run.logger.success(f"Found {len(moments)} moments")
         return moments
 
     def _limit(self, run: ClipRun, ranked: Segments) -> Segments:

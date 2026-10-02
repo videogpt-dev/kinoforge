@@ -3,9 +3,9 @@ offline (True) means no LLM is constructed or called for moment selection."""
 
 from __future__ import annotations
 
-from kinoforge.segments.clips.moments.engines import MomentEngines
+from kinoforge.segments.clips.moments.finders import MomentFinders
 
-prefers_offline = MomentEngines.prefers_offline
+prefers_offline = MomentFinders.prefers_offline
 _ROUTE = {"provider": "openrouter", "model": "deepseek/deepseek-chat"}
 
 

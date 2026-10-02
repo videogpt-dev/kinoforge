@@ -1,11 +1,10 @@
-"""Value objects introduced by the smell cleanup: ModelRef, PromptCeiling, Moment, MomentTuning."""
+"""Value objects introduced by the smell cleanup: ModelRef, PromptCeiling, Moment."""
 
 from __future__ import annotations
 
 import pytest
 
 from kinoforge.contract import ModelRef
-from kinoforge.segments.clips.moments.ai_engine import MomentTuning
 from kinoforge.segments.clips.moments.moment import Moment
 from kinoforge.segments.story.media.ceiling import PromptCeiling, limit_from_error
 
@@ -99,16 +98,3 @@ def test_moment_tolerates_missing_fields():
     view = Moment({})
     assert (view.start, view.end, view.span, view.score) == (0.0, 0.0, 0.0, 0.0)
 
-
-# --- MomentTuning ---------------------------------------------------------
-
-def test_tuning_defaults_when_unset_or_zero():
-    assert MomentTuning.from_mapping(None) == MomentTuning()
-    assert MomentTuning.from_mapping({"batch_size": 0, "max_workers": ""}) == MomentTuning()
-
-
-def test_tuning_overrides_cast_to_field_type():
-    tuning = MomentTuning.from_mapping({"batch_size": "12", "context_pad": 3, "unknown": 9})
-    assert tuning.batch_size == 12 and isinstance(tuning.batch_size, int)
-    assert tuning.context_pad == 3.0 and isinstance(tuning.context_pad, float)
-    assert tuning.max_workers == MomentTuning().max_workers

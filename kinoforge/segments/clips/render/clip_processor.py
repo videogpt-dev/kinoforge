@@ -23,20 +23,21 @@ class ClipCutter:
     def cut_all(
         self, moments: List[Dict], output_dir: Path, *, max_workers: int = 1,
         meter: Optional[Meter] = None,
-    ) -> List[Path]:
-        """Raw clip_NN_raw.mp4 per moment (in order); failed cuts are skipped and not metered."""
+    ) -> List[Optional[Path]]:
+        """Raw clip_NN_raw.mp4 per moment, in moment order; None where the cut failed."""
         output_dir.mkdir(parents=True, exist_ok=True)
         items = [(output_dir / f"clip_{i:02d}_raw.mp4", Moment(m))
                  for i, m in enumerate(moments, 1)]
-        clips = [clip for clip in Ffmpeg.parallel(self.cut, items, max_workers) if clip]
+        clips = Ffmpeg.parallel(self.cut, items, max_workers)
         if meter:
-            meter(MeterAction.CLIP_RENDER, len(clips))
+            meter(MeterAction.CLIP_RENDER, sum(1 for clip in clips if clip))
         return clips
 
     def cut(self, output: Path, moment: Moment) -> Optional[Path]:
         if self._copy(output, moment) or self._reencode(output, moment):
             active().info(f"  extracted {output.name}")
             return output
+        output.unlink(missing_ok=True)
         active().warning(f"  failed {output.name}")
         return None
 
@@ -59,7 +60,7 @@ class ClipCutter:
         try:
             Ffmpeg.run([*self._span_args(moment), "-c:v", "libx264", "-preset", preset,
                         "-crf", crf, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-                        str(output)], timeout=120)
+                        str(output)], timeout=120 + moment.span * 6)
         except FfmpegError as exc:
             active().error(f"      ffmpeg: {exc}")
             return False

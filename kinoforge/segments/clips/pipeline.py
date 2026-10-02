@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from kinoforge.segments.clips.moments.engines import MomentEngine
+from kinoforge.segments.clips.moments.finders import MomentFinder
 from kinoforge.segments.clips.render.ffmpeg import Ffmpeg
 from kinoforge.segments.clips.run import ClipRun
 from kinoforge.segments.clips.stages.moments import Moments
@@ -11,8 +11,8 @@ from kinoforge.segments.clips.stages.transcribe import Transcribe, TranscribeVid
 class ClipsPipeline:
     """One clips execution: two guards, then transcribe, moments, render."""
 
-    def __init__(self, transcribe_video: TranscribeVideo, moment_engine: MomentEngine) -> None:
-        self._stages = (Transcribe(transcribe_video), Moments(moment_engine), Render())
+    def __init__(self, transcribe_video: TranscribeVideo, moment_finder: MomentFinder) -> None:
+        self._stages = (Transcribe(transcribe_video), Moments(moment_finder), Render())
 
     def run(self, run: ClipRun) -> None:
         try:

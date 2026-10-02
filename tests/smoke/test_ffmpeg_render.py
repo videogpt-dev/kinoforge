@@ -16,8 +16,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 from kinoforge.contract import MeterAction  # noqa: E402
+from kinoforge.segments.clips.moments.finders import OfflineMomentFinder  # noqa: E402
 from kinoforge.segments.clips.moments.moment import Moment  # noqa: E402
-from kinoforge.segments.clips.moments.offline_engine import OfflineMomentEngine  # noqa: E402
 from kinoforge.segments.clips.pipeline import ClipsPipeline  # noqa: E402
 from kinoforge.segments.clips.render.base_render import BaseCut  # noqa: E402
 from kinoforge.segments.clips.render.captions import CaptionWindow  # noqa: E402
@@ -103,8 +103,10 @@ def test_cut_all_cuts_exact_spans_even_off_keyframe(source, tmp_path):
     assert metered == [(MeterAction.CLIP_RENDER, 2)]
 
 
-def test_cut_all_skips_a_failed_cut(tmp_path):
-    assert ClipCutter(tmp_path / "missing.mp4").cut_all([Moment.new(0, 1)], tmp_path / "raw") == []
+def test_cut_all_keeps_a_failed_cut_in_place_as_none(tmp_path):
+    raw = tmp_path / "raw"
+    assert ClipCutter(tmp_path / "missing.mp4").cut_all([Moment.new(0, 1)], raw) == [None]
+    assert not list(raw.glob("*.mp4"))
 
 
 # --- formatting -----------------------------------------------------------
@@ -165,6 +167,16 @@ def test_variants_every_format_parallel_and_metered(source, tmp_path):
     assert metered == [(MeterAction.CLIP_CAPTIONS, 2), (MeterAction.CLIP_VARIANT, 2)]
 
 
+def test_variants_keep_clip_numbers_when_an_earlier_cut_failed(source, tmp_path):
+    moments = [Moment.new(0, 2), Moment.new(2, 4)]
+    raw = ClipCutter(source).cut_all(moments, tmp_path / "raw")
+    out = VariantFormatter(
+        ["9:16"], _TRANSCRIPT, rendering={"burn_subtitles": False, "mute_output": False},
+        processing={"use_gpu": False, "max_workers": 1},
+    ).format_all([None, raw[1]], moments, tmp_path / "fmt")
+    assert [p.name for p in out["9:16"]] == ["clip_02_9x16.mp4"]
+
+
 # --- base render ----------------------------------------------------------
 
 def test_base_render_crops_and_trims(source, tmp_path):
@@ -203,7 +215,7 @@ def test_clips_pipeline_end_to_end(source, tmp_path):
         video_path=source, meter=_meter(metered),
     )
     ClipsPipeline(
-        transcribe_video=lambda *_a, **_k: list(_TRANSCRIPT), moment_engine=OfflineMomentEngine(),
+        transcribe_video=lambda *_a, **_k: list(_TRANSCRIPT), moment_finder=OfflineMomentFinder(),
     ).run(run)
     assert run.status == "ok", run.error
     assert len(run.artifacts) == 2

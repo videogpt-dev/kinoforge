@@ -92,4 +92,10 @@ class Render:
                 "meta": {"clip_id": clip_id, "moment_index": index - 1},
             })
         run.data["clips"] = placed
-        run.logger.success(f"Auto-exported {len(placed)} clips")
+        wanted = sum(1 for clip_id in run.clip_ids if clip_id)
+        if not placed and wanted:
+            raise RuntimeError(f"none of the {wanted} clips rendered")
+        if len(placed) < wanted:
+            run.logger.warning(f"Rendered {len(placed)}/{wanted} clips; the rest failed")
+        else:
+            run.logger.success(f"Auto-exported {len(placed)} clips")

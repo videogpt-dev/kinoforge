@@ -5,7 +5,7 @@ from kinoforge.contract import JobKind
 from kinoforge.definitions import DefinitionBundle
 from kinoforge.observ import KinoLogger, bind, build_logger, logged, reset
 from kinoforge.schemas import ClipsExecutionRequest
-from kinoforge.segments.clips.moments.engines import MomentEngines
+from kinoforge.segments.clips.moments.finders import MomentFinders
 from kinoforge.segments.clips.pipeline import ClipsPipeline
 from kinoforge.segments.clips.run import ClipRun
 from kinoforge.service.meter import EventMeter
@@ -62,8 +62,8 @@ class ClipsRuntime:
                 transcribe_video=GatewayTranscriber(
                     self._settings, request.owner, request.config["transcription"], meter
                 ).transcribe_video,
-                moment_engine=MomentEngines(self._settings.infrelay(request.owner).complete)(
-                    config, definitions
+                moment_finder=MomentFinders.pick(
+                    config, definitions, self._settings.infrelay(request.owner).complete
                 ),
             ).run(run)
         finally:

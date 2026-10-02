@@ -57,6 +57,12 @@ class TranscriptText:
         return candidates
 
     @staticmethod
+    def clock(seconds: float) -> str:
+        minutes, secs = divmod(int(seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+    @staticmethod
     def detect_language(text: str) -> str:
         """The script with the most characters wins, so a stray glyph cannot flip the label."""
         counts = {

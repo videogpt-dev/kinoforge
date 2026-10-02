@@ -5,7 +5,7 @@ regression guard for the bug where an empty options.moment_route silently forced
 from __future__ import annotations
 
 from kinoforge.schemas import ClipsOptionsRequest
-from kinoforge.segments.clips.moments.engines import MomentEngines
+from kinoforge.segments.clips.moments.finders import MomentFinders
 
 _ROUTE = {"provider": "cloud", "model": "auto"}
 
@@ -25,9 +25,9 @@ def test_options_model_does_not_declare_moment_fields():
 def test_config_route_survives_the_options_merge():
     merged = _merge({"moment_finder": "auto", "moment_route": _ROUTE})
     assert merged["moment_route"] == _ROUTE  # not clobbered by an options default
-    assert MomentEngines.prefers_offline(merged) is False  # AI selected
+    assert MomentFinders.prefers_offline(merged) is False  # AI selected
 
 
 def test_offline_in_config_forces_offline_through_merge():
     merged = _merge({"moment_finder": "offline", "moment_route": _ROUTE})
-    assert MomentEngines.prefers_offline(merged) is True
+    assert MomentFinders.prefers_offline(merged) is True

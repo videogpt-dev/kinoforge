@@ -64,8 +64,6 @@ CATALOG: Tuple[SegmentSpec, ...] = (
         requirements=(
             Requirement("agent", "prompts.agents.moment_discovery",
                         "Discover strongest moments from full transcript."),
-            Requirement("agent", "prompts.agents.clip_analysis",
-                        "Score candidates and refine clip boundaries."),
         ),
     ),
     SegmentSpec(
