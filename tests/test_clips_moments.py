@@ -6,7 +6,7 @@ import pytest
 
 from kinoforge.segments.clips.moments.finders import MomentFinder
 from kinoforge.segments.clips.stages.moments import Moments
-from tests.support import make_run, texts
+from tests.support import make_worker, texts
 
 _BASE = {"min_length": 0, "max_length": 0, "clip_count": 10, "output_dir": "/out", "slug": "s"}
 
@@ -27,7 +27,7 @@ def _no_probe(monkeypatch):
 
 
 def _limit(config, ranked):
-    run = make_run(config)
+    run = make_worker(config)
     return Moments(_Finder())._limit(run, ranked), run
 
 
@@ -35,7 +35,7 @@ def _limit(config, ranked):
 
 def test_preset_moments_skip_discovery_and_sort_by_score():
     preset = [{"start": 0.0, "end": 5.0, "score": 10}, {"start": 6.0, "end": 9.0, "score": 90}]
-    run = make_run({**_BASE, "preset_moments": preset})
+    run = make_worker({**_BASE, "preset_moments": preset})
     assert Moments(_Finder())(run) is True
     assert [m["score"] for m in run.data["used_moments"]] == [90, 10]
     assert run.data["moments"] is not preset  # copied, not aliased
@@ -44,21 +44,21 @@ def test_preset_moments_skip_discovery_and_sort_by_score():
 
 
 def test_preset_missing_score_sorts_last():
-    run = make_run({**_BASE, "preset_moments": [{"start": 0, "end": 1}, {"start": 2, "end": 3,
+    run = make_worker({**_BASE, "preset_moments": [{"start": 0, "end": 1}, {"start": 2, "end": 3,
                                                                           "score": 5}]})
     Moments(_Finder())(run)
     assert [m.get("score") for m in run.data["used_moments"]] == [5, None]
 
 
 def test_finder_moments_are_used():
-    run = make_run(_BASE)
+    run = make_worker(_BASE)
     assert Moments(_Finder())(run) is True
     assert run.record["moments"][0]["text"] == "moment"
     assert run.clip_ids == ["clip_01"]
 
 
 def test_stops_when_cancelled():
-    run = make_run({**_BASE, "preset_moments": [{"start": 0, "end": 5}]},
+    run = make_worker({**_BASE, "preset_moments": [{"start": 0, "end": 5}]},
                    is_cancelled=lambda: True)
     assert Moments(_Finder())(run) is False
     assert run.status == "cancelled"
@@ -68,7 +68,7 @@ def test_clip_ids_skip_zero_length_and_merge_existing_record():
     preset = [{"start": 0, "end": 5, "score": 3}, {"start": 5, "end": 5, "score": 2},
               {"start": 6, "end": 9, "score": 1}]
     existing = {"moments": [{"start": 20.0, "end": 25.0, "text": "old", "score": 1, "id": 1}]}
-    run = make_run({**_BASE, "preset_moments": preset}, record=existing)
+    run = make_worker({**_BASE, "preset_moments": preset}, record=existing)
     Moments(_Finder())(run)
     assert run.clip_ids == ["clip_01", None, "clip_03"]
     assert [m["start"] for m in run.record["moments"]] == [20.0, 0.0, 5.0, 6.0]

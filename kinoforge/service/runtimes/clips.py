@@ -7,14 +7,14 @@ from kinoforge.observ import KinoLogger, bind, build_logger, logged, reset
 from kinoforge.schemas import ClipsExecutionRequest
 from kinoforge.segments.clips.moments.finders import MomentFinders
 from kinoforge.segments.clips.pipeline import ClipsPipeline
-from kinoforge.segments.clips.run import ClipRun
+from kinoforge.segments.clips.worker import ClipWorker
 from kinoforge.service.meter import EventMeter
 from kinoforge.service.runtimes.transcription import GatewayTranscriber
 from kinoforge.service.settings import ServiceSettings
 
 
 class ClipsRuntime:
-    """HTTP request in, ClipRun through the pipeline, response dict out."""
+    """HTTP request in, ClipWorker through the pipeline, response dict out."""
 
     def __init__(self, settings: ServiceSettings) -> None:
         self._settings = settings
@@ -46,7 +46,7 @@ class ClipsRuntime:
         workspace = Path(request.workspace)
         workspace.mkdir(parents=True, exist_ok=True)
         self._log_request(logger, request, config, definitions)
-        run = ClipRun(
+        worker = ClipWorker(
             job_id=request.project_id, config=config, workdir=workspace, logger=logger,
             video_path=self._path(request.input.get("video_path")),
             audio_path=self._path(request.input.get("audio_path")),
@@ -65,10 +65,10 @@ class ClipsRuntime:
                 moment_finder=MomentFinders.pick(
                     config, definitions, self._settings.infrelay(request.owner).complete
                 ),
-            ).run(run)
+            ).run(worker)
         finally:
             reset(token)
-        return self._response(request, run, definitions, meter, logger)
+        return self._response(request, worker, definitions, meter, logger)
 
     def _log_request(
         self, logger: KinoLogger,
@@ -99,10 +99,10 @@ class ClipsRuntime:
 
     @staticmethod
     def _response(
-        request: ClipsExecutionRequest, run: ClipRun,
+        request: ClipsExecutionRequest, worker: ClipWorker,
         definitions: DefinitionBundle, meter: EventMeter, logger: KinoLogger,
     ) -> Dict[str, Any]:
-        run.data["execution"] = {
+        worker.data["execution"] = {
             "id": request.job_id,
             "project_id": request.project_id,
             "segment": JobKind.CLIPS.value,
@@ -110,13 +110,13 @@ class ClipsRuntime:
         }
         return {
             "result": {
-                "status": run.status,
-                "artifacts": run.artifacts,
-                "stages": run.stages,
-                "error": run.error,
-                "data": run.data,
+                "status": worker.status,
+                "artifacts": worker.artifacts,
+                "stages": worker.stages,
+                "error": worker.error,
+                "data": worker.data,
             },
-            "state": {"record": run.record, "transcript": run.transcript or None},
+            "state": {"record": worker.record, "transcript": worker.transcript or None},
             "meter_events": meter.events,
             "logs": logger.entries,
         }

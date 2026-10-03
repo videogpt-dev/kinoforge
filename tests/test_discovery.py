@@ -13,16 +13,28 @@ _SPEC = MomentSpec(min_len=5, max_len=30, count=3)
 
 
 def _finder(reply: str = "[]", context_window: int = 1_000_000,
-            prompts: List[dict] | None = None) -> AiMomentFinder:
+            prompts: List[dict] | None = None, calls: List[dict] | None = None) -> AiMomentFinder:
     def render(name, **params):
-        if prompts is not None:
+        if prompts is not None and params:
             prompts.append(params)
         return name
 
+    def complete(prompt, **kwargs):
+        if calls is not None:
+            calls.append({"prompt": prompt, **kwargs})
+        return reply
+
     return AiMomentFinder(
-        ModelRef("op", "m"), complete=lambda prompt, **k: reply, render=render,
-        context_window=context_window,
+        ModelRef("op", "m"), complete=complete, render=render, context_window=context_window,
     )
+
+
+def test_rules_go_in_the_system_prompt_and_transcript_in_the_user_prompt():
+    calls: list = []
+    _finder(calls=calls).find(_SEGS, _SPEC)
+    assert [(c["system"], c["prompt"]) for c in calls] == [
+        ("prompts.agents.moment_discovery_system", "prompts.agents.moment_discovery"),
+    ]
 
 
 def test_small_transcript_is_sent_whole_in_one_part():

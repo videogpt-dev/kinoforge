@@ -16,12 +16,15 @@ Renderer = Callable[..., str]
 
 _CHARS_PER_TOKEN = 4
 _RESERVE_TOKENS = 8000
-_MIN_BUDGET_CHARS = 4000
-_REPLY_TOKENS = 4000
+_MIN_BUDGET_CHARS = 2000
+_REPLY_TOKENS = 8000
+_SYSTEM_KEY = "prompts.agents.moment_discovery_system"
+_USER_KEY = "prompts.agents.moment_discovery"
 
 
 class AiMomentFinder(MomentFinder):
-    """Gives the LLM the whole timestamped transcript and asks for up to `count` moments.
+    """Sends the editor role and rules as the system prompt, then the whole timestamped
+    transcript with the question last, asking for up to `count` moments.
     A transcript over the context budget is split by time into labelled parts that overlap
     by max_len seconds, so nothing is dropped. When the model picks nothing, the offline
     finder ranks the transcript instead."""
@@ -56,12 +59,15 @@ class AiMomentFinder(MomentFinder):
         parts = self._parts(segs, spec.max_len)
         active().info(f"  Reading the full transcript in {len(parts)} part(s) ({self._route})...")
         labels = [self._label(i, len(parts), part, segs) for i, part in enumerate(parts)]
+        system = self._render(_SYSTEM_KEY)
         picks = [p for found in self._parallel(
-            lambda job: self._ask_part(job[0], job[1], spec), list(zip(parts, labels))
-        ) if found for p in found]
+            lambda job: self._ask_part(system, job[0], job[1], spec),
+            list(zip(parts, labels))
+            ) if found for p in found]
         moments = [m for m in (self._to_moment(p, segs, spec) for p in picks) if m]
         kept: List[Moment] = []
-        for moment in sorted((Moment(m) for m in moments), key=lambda m: m.score, reverse=True):
+        sortedMoments = sorted((Moment(m) for m in moments), key=lambda m: m.score, reverse=True)
+        for moment in sortedMoments:
             if all(moment.overlap_ratio(k) <= 0.5 for k in kept):
                 kept.append(moment)
         active().success(f"  Chose {len(kept)} moments ({len(picks)} raw picks)")
@@ -106,13 +112,14 @@ class AiMomentFinder(MomentFinder):
                 f"{TranscriptText.clock(Moment(segs[-1]).end)} video. "
                 f"Only pick moments inside this part.")
 
-    def _ask_part(self, part: List[Dict], label: str, spec: MomentSpec) -> List[Dict]:
+    def _ask_part(self, system: str, part: List[Dict], label: str,
+                  spec: MomentSpec) -> List[Dict]:
         prompt = self._render(
-            "prompts.agents.moment_discovery",
+            _USER_KEY,
             transcript="\n".join(self._line(s) for s in part), part=label,
             count=str(spec.count), min_len=f"{spec.min_len:.0f}", max_len=f"{spec.max_len:.0f}",
         )
-        return self._ask(prompt, _REPLY_TOKENS + 150 * spec.count, 0.4)
+        return self._ask(system, prompt, _REPLY_TOKENS + 150 * spec.count, 0.4)
 
     def _to_moment(self, pick: Dict, segs: List[Dict], spec: MomentSpec) -> Optional[Dict]:
         try:
@@ -134,10 +141,12 @@ class AiMomentFinder(MomentFinder):
             ai_scored=True, provider=self._route.provider, source="transcript_discovery",
         )
 
-    def _ask(self, prompt: str, max_tokens: int, temperature: float) -> List[Dict]:
+    def _ask(self, system: str, prompt: str, max_tokens: int,
+             temperature: float) -> List[Dict]:
         """The last JSON array of objects in the reply, so fences, prose and a reasoning
         model's thinking before it are tolerated; [] when there is none."""
-        content = self._complete(prompt, max_tokens=max_tokens, temperature=temperature) or ""
+        content = self._complete(prompt, system=system, max_tokens=max_tokens,
+                                 temperature=temperature) or ""
         decoder = json.JSONDecoder()
         found: List[Dict] = []
         pos = content.find("[")

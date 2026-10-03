@@ -9,7 +9,7 @@ import pytest
 
 from kinoforge.segments.clips.moments.finders import MomentFinder
 from kinoforge.segments.clips.pipeline import ClipsPipeline
-from tests.support import make_run
+from tests.support import make_worker
 
 _TRANSCRIPT = [{"start": 0, "end": 15, "text": "hello"}]
 _CONFIG = {"slug": "video", "output_dir": "/out", "min_length": 5, "max_length": 30,
@@ -39,7 +39,7 @@ def _pipeline(transcribed: list) -> ClipsPipeline:
 
 def test_analyze_only_uses_captions_and_skips_rendering():
     transcribed: list = []
-    run = make_run({**_CONFIG, "pretranscript": _TRANSCRIPT})
+    run = make_worker({**_CONFIG, "pretranscript": _TRANSCRIPT})
     _pipeline(transcribed).run(run)
 
     assert run.status == "ok"
@@ -55,21 +55,21 @@ def test_analyze_only_uses_captions_and_skips_rendering():
 
 def test_transcript_from_state_is_reused():
     transcribed: list = []
-    run = make_run(_CONFIG, transcript=list(_TRANSCRIPT))
+    run = make_worker(_CONFIG, transcript=list(_TRANSCRIPT))
     _pipeline(transcribed).run(run)
     assert not transcribed
     assert "transcribe:skipped" in run.stages
 
 
 def test_transcript_times_are_rounded_to_milliseconds():
-    run = make_run(_CONFIG, transcript=[{"start": 4.6000000000000005, "end": 9.6, "text": "a"}])
+    run = make_worker(_CONFIG, transcript=[{"start": 4.6000000000000005, "end": 9.6, "text": "a"}])
     _pipeline([]).run(run)
     assert run.data["transcript"] == [{"start": 4.6, "end": 9.6, "text": "a"}]
 
 
 def test_force_transcribes_again_and_fills_state():
     transcribed: list = []
-    run = make_run({**_CONFIG, "force": True}, transcript=[{"start": 0, "end": 1, "text": "x"}])
+    run = make_worker({**_CONFIG, "force": True}, transcript=[{"start": 0, "end": 1, "text": "x"}])
     _pipeline(transcribed).run(run)
     assert len(transcribed) == 1
     assert run.transcript == _TRANSCRIPT
@@ -77,7 +77,7 @@ def test_force_transcribes_again_and_fills_state():
 
 def test_duration_limit_stops_before_transcription():
     transcribed: list = []
-    run = make_run({**_CONFIG, "limits": {"source_max_seconds": 10}})
+    run = make_worker({**_CONFIG, "limits": {"source_max_seconds": 10}})
     _pipeline(transcribed).run(run)
     assert run.status == "failed"
     assert run.error.startswith("Video is")
@@ -86,7 +86,7 @@ def test_duration_limit_stops_before_transcription():
 
 
 def test_source_under_the_limit_runs():
-    run = make_run({**_CONFIG, "limits": {"source_max_seconds": 600}},
+    run = make_worker({**_CONFIG, "limits": {"source_max_seconds": 600}},
                    transcript=list(_TRANSCRIPT))
     _pipeline([]).run(run)
     assert run.status == "ok"
@@ -94,7 +94,7 @@ def test_source_under_the_limit_runs():
 
 def test_already_processed_is_skipped():
     transcribed: list = []
-    run = make_run({**_CONFIG, "skip_already_processed": True}, has_clips=True)
+    run = make_worker({**_CONFIG, "skip_already_processed": True}, has_clips=True)
     _pipeline(transcribed).run(run)
     assert run.status == "skipped"
     assert not transcribed
@@ -102,7 +102,7 @@ def test_already_processed_is_skipped():
 
 def test_regenerate_ignores_existing_clips():
     transcribed: list = []
-    run = make_run({**_CONFIG, "skip_already_processed": True, "is_regenerate": True},
+    run = make_worker({**_CONFIG, "skip_already_processed": True, "is_regenerate": True},
                    has_clips=True)
     _pipeline(transcribed).run(run)
     assert run.status == "ok"
@@ -110,7 +110,7 @@ def test_regenerate_ignores_existing_clips():
 
 def test_cancelled_run_stops_before_work():
     transcribed: list = []
-    run = make_run(_CONFIG, is_cancelled=lambda: True)
+    run = make_worker(_CONFIG, is_cancelled=lambda: True)
     _pipeline(transcribed).run(run)
     assert run.status == "cancelled"
     assert run.data["cancelled"] is True
@@ -118,7 +118,7 @@ def test_cancelled_run_stops_before_work():
 
 
 def test_audio_only_render_fails_loudly():
-    run = make_run({**_CONFIG, "analyze_only": False, "pretranscript": _TRANSCRIPT},
+    run = make_worker({**_CONFIG, "analyze_only": False, "pretranscript": _TRANSCRIPT},
                    video=None, audio=Path("a.mp3"))
     _pipeline([]).run(run)
     assert run.status == "failed"

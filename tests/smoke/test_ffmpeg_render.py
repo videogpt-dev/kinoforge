@@ -28,8 +28,8 @@ from kinoforge.segments.clips.render.formatter import (  # noqa: E402
     VariantFormatter,
 )
 from kinoforge.segments.clips.render.media import FillStyle, MasterQuality  # noqa: E402
-from kinoforge.segments.clips.run import ClipRun  # noqa: E402
 from kinoforge.segments.clips.transcription import Transcriber  # noqa: E402
+from kinoforge.segments.clips.worker import ClipWorker  # noqa: E402
 from tests.support import capturing_logger  # noqa: E402
 
 _TRANSCRIPT = [
@@ -210,7 +210,7 @@ def test_clips_pipeline_end_to_end(source, tmp_path):
         "processing": {"max_workers": 2, "use_gpu": False},
         "rendering": {"burn_subtitles": True, "mute_output": False},
     }
-    run = ClipRun(
+    run = ClipWorker(
         job_id="proj1", config=config, workdir=tmp_path / "ws", logger=capturing_logger()[0],
         video_path=source, meter=_meter(metered),
     )

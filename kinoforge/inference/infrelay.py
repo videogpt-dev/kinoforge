@@ -73,8 +73,9 @@ class InfrelayClient:
             raise InfrelayError("infrelay text returned unsupported output")
         return str(output.get("value") or ""), dict(output.get("meta") or {})
 
-    def complete(self, ref: ModelRef, prompt: str, *, max_tokens: int, temperature: float) -> str:
-        return self.text(ref, "", prompt, temperature=temperature, max_tokens=max_tokens)[0]
+    def complete(self, ref: ModelRef, prompt: str, *, max_tokens: int, temperature: float,
+                 system: str = "") -> str:
+        return self.text(ref, system, prompt, temperature=temperature, max_tokens=max_tokens)[0]
 
     def image(self, ref: ModelRef, prompt: str, spec: ImageSpec) -> bytes:
         payload: Dict[str, Any] = {

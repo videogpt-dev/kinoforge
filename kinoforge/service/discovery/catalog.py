@@ -62,6 +62,8 @@ CATALOG: Tuple[SegmentSpec, ...] = (
                     "captions"),
         ),
         requirements=(
+            Requirement("agent", "prompts.agents.moment_discovery_system",
+                        "Editor role, moment rules and reply format for moment discovery."),
             Requirement("agent", "prompts.agents.moment_discovery",
                         "Discover strongest moments from full transcript."),
         ),
