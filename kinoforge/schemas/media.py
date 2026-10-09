@@ -73,10 +73,25 @@ class ImageRenderRequest(LoggableRequest):
     )
 
 
+class PromptRewriteUsage(BaseModel):
+    provider: str = Field(description="Text provider that rewrote the prompt.")
+    model: str = Field(default="", description="Text model that rewrote the prompt.")
+    credits: int = Field(default=0, ge=0, description="Infrelay's price for the rewrite.")
+
+
+REWRITES_DESCRIPTION = (
+    "Prompt rewrites Infrelay ran for this render, each with its price, for the caller to "
+    "bill. Empty when enhance is off or the rewrite was cached."
+)
+
+
 class ImageRenderResponse(BaseModel):
     image_b64: str = Field(description="Generated image, base64 encoded.")
     observed_limit: int = Field(
         default=0, description="Provider-declared prompt ceiling learned this call; 0 when none."
+    )
+    enhance: List[PromptRewriteUsage] = Field(
+        default_factory=list, description=REWRITES_DESCRIPTION
     )
     logs: List[LogEntryResponse] = Field(default_factory=list)
 
@@ -134,6 +149,9 @@ class VideoRenderResponse(BaseModel):
     video_b64: str = Field(description="Generated clip (mp4), base64 encoded.")
     observed_limit: int = Field(
         default=0, description="Provider-declared prompt ceiling learned this call; 0 when none."
+    )
+    enhance: List[PromptRewriteUsage] = Field(
+        default_factory=list, description=REWRITES_DESCRIPTION
     )
     logs: List[LogEntryResponse] = Field(default_factory=list)
 

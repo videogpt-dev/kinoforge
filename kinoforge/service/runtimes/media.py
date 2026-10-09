@@ -100,9 +100,8 @@ class MediaRuntime:
         logger = self._logger(request, "image")
         logger.info(f"image render start ({request.mode})", mode=request.mode)
         ceiling = PromptCeiling(request.prompt_limit)
-        painter = self._painter(
-            self._presets(request), self._settings.infrelay(request.owner).image, ceiling
-        )
+        infrelay = self._settings.infrelay(request.owner)
+        painter = self._painter(self._presets(request), infrelay.image, ceiling)
         opts = request.options
         spec = ImageSpec(
             aspect_ratio=opts.aspect_ratio, seed=opts.seed, mature=opts.mature,
@@ -121,6 +120,7 @@ class MediaRuntime:
         return {
             "image_b64": base64.b64encode(data).decode(),
             "observed_limit": ceiling.learned,
+            "enhance": infrelay.rewrites,
             "logs": logger.entries,
         }
 
@@ -129,9 +129,8 @@ class MediaRuntime:
         logger = self._logger(request, "video")
         logger.info("video render start")
         ceiling = PromptCeiling(request.prompt_limit)
-        maker = ClipMaker(
-            generate_video=self._settings.infrelay(request.owner).video, ceiling=ceiling
-        )
+        infrelay = self._settings.infrelay(request.owner)
+        maker = ClipMaker(generate_video=infrelay.video, ceiling=ceiling)
         story, scene, rec = dict(request.story), dict(request.scene), dict(request.rec)
         opts = request.options
         spec = VideoSpec(
@@ -145,6 +144,7 @@ class MediaRuntime:
         return {
             "video_b64": base64.b64encode(data).decode(),
             "observed_limit": ceiling.learned,
+            "enhance": infrelay.rewrites,
             "logs": logger.entries,
         }
 

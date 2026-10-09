@@ -235,3 +235,24 @@ def test_render_voice_forwards_resolved_route(monkeypatch):
         "ref": "edge/en-US-AriaNeural", "text": "The light still turns.",
         "voice": "en-US-AriaNeural", "language": "en",
     }
+
+
+def test_render_reports_each_prompt_rewrite_infrelay_ran(monkeypatch):
+    import httpx
+
+    from kinoforge.inference import infrelay as infrelay_module
+
+    rewrites = iter([{"provider": "openrouter", "model": "m", "credits": 2}, None])
+
+    def post(url, headers, json, timeout):
+        usage = {"credits": 3, "enhance": next(rewrites)}
+        output = {"type": "b64", "value": base64.b64encode(PNG).decode()}
+        return httpx.Response(200, json={"output": output, "usage": usage})
+
+    monkeypatch.setattr(infrelay_module.httpx, "post", post)
+    runtime = MediaRuntime(SETTINGS)
+    options = {"aspect_ratio": "9:16", "seed": 7, "enhance": True}
+    first = runtime.render_image(_image_request("scene", options=options))
+    cached = runtime.render_image(_image_request("scene", options=options))
+    assert first["enhance"] == [{"provider": "openrouter", "model": "m", "credits": 2}]
+    assert cached["enhance"] == []

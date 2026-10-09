@@ -21,6 +21,8 @@ class InfrelayClient:
         self._url = url.rstrip("/")
         self._token = token
         self._tenant = tenant
+        # Prompt rewrites infrelay ran for this client's calls, for the caller to bill.
+        self.rewrites: List[Dict[str, Any]] = []
 
     def _generate(
         self, kind: str, ref: ModelRef, payload: Dict[str, Any], *, timeout: float
@@ -59,6 +61,9 @@ class InfrelayClient:
                   status=response.status_code, ms=elapsed_ms,
                   output_type=(result.get("output") or {}).get("type"),
                   request_id=result.get("request_id"))
+        rewrite = (result.get("usage") or {}).get("enhance")
+        if isinstance(rewrite, dict):
+            self.rewrites.append(dict(rewrite))
         return result
 
     def text(
