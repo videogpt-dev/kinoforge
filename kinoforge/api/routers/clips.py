@@ -98,7 +98,7 @@ def render_base(code_name: JobKind, request: BaseRenderRequest) -> dict:
         quality=MasterQuality(request.quality),
     )
     with executions.running(request.execution_id) as control:
-        ok = cut.render(is_cancelled=control.is_cancelled if control else None)
+        ok = cut.render(is_cancelled=control.is_cancelled)
     return {"ok": ok, "path": str(output) if ok else ""}
 
 

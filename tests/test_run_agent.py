@@ -79,9 +79,21 @@ def test_cut_off_json_blames_the_budget():
     assert "cut off at 5 tokens" in result["error"] and "usage" in result
 
 
-def test_invalid_json_suggests_retry():
-    result, _ = _run([_JSON_STAGE], ["not json"])
+def test_invalid_json_is_asked_once_more_then_suggests_retry():
+    result, fake = _run([_JSON_STAGE], ["not json", "still not json"])
     assert "did not return valid JSON" in result["error"]
+    assert fake.calls == 2
+    assert result["usage"]["input_tokens"] == 6
+
+
+def test_invalid_json_recovers_on_the_second_ask():
+    result, fake = _run([_JSON_STAGE], ["not json", json.dumps(_STORY)])
+    assert result["ok"] is True and fake.calls == 2
+
+
+def test_cut_off_json_is_not_retried():
+    result, fake = _run([_JSON_STAGE], [("{\"scenes\": [", "length")])
+    assert "cut off" in result["error"] and fake.calls == 1
 
 
 def test_no_scenes_and_unparseable_final_output():
@@ -98,7 +110,8 @@ def test_quality_gate_blocks_silent_scenes():
 
 def test_cancellation_before_and_after_a_stage():
     before, fake = _run([_JSON_STAGE], [json.dumps(_STORY)], cancelled=lambda: True)
-    assert before == {"ok": False, "cancelled": True, "error": "story execution cancelled"}
+    assert before["cancelled"] is True and before["error"] == "story execution cancelled"
+    assert before["usage"]["input_tokens"] == 0
     assert fake.calls == 0
     ticks = iter([False, True])
     after, _ = _run([_JSON_STAGE], [json.dumps(_STORY)], cancelled=lambda: next(ticks))

@@ -5,11 +5,11 @@ from __future__ import annotations
 from kinoforge.segments.story.agent import clean_text, strip_dashes
 from kinoforge.segments.story.operations import StoryOperations
 from kinoforge.segments.story.run_agent import (
-    _normalize,
-    _not_cancelled,
-    _stage_temperature,
+    JSON_TEMPERATURE,
+    TEXT_TEMPERATURE,
+    StageUtils,
+    StoryShape,
 )
-
 
 # --- strip_dashes ---------------------------------------------------------
 
@@ -25,14 +25,18 @@ def test_strip_dashes_leaves_plain_hyphen():
 
 # --- run_agent helpers ----------------------------------------------------
 
-def test_not_cancelled_default():
-    assert _not_cancelled() is False
-
-
 def test_stage_temperature_reads_value_or_defaults():
-    assert _stage_temperature({"temperature": 0.3}) == 0.3
-    assert _stage_temperature({}) == 0.85
-    assert _stage_temperature({"temperature": "nan-ish"}) == 0.85
+    assert StageUtils.temperature({"temperature": 0.3}, is_json=False) == 0.3
+    assert StageUtils.temperature({}, is_json=False) == TEXT_TEMPERATURE
+    assert StageUtils.temperature({}, is_json=True) == JSON_TEMPERATURE
+    assert StageUtils.temperature({"temperature": "nan-ish"}, is_json=False) == TEXT_TEMPERATURE
+
+
+def test_missing_or_odd_token_counts_read_as_zero():
+    assert StageUtils.tokens({}, "input_tokens") == 0
+    assert StageUtils.tokens({"input_tokens": None}, "input_tokens") == 0
+    assert StageUtils.tokens({"input_tokens": "x"}, "input_tokens") == 0
+    assert StageUtils.tokens({"input_tokens": "12"}, "input_tokens") == 12
 
 
 def test_normalize_drops_promptless_scenes_and_coerces_motion():
@@ -45,7 +49,7 @@ def test_normalize_drops_promptless_scenes_and_coerces_motion():
             {"narration": "no prompt here"},
         ],
     }
-    out = _normalize(raw)
+    out = StoryShape.normalize(raw)
     assert out["logline"] == "A hero, reborn"  # dash stripped
     assert out["characters"] == [{"name": "A", "description": "d"}]  # empty char dropped
     assert len(out["scenes"]) == 1

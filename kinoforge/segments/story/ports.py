@@ -1,27 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Protocol, Tuple
+from typing import Protocol
 
-from kinoforge.contract import Meter, ModelRef, _no_meter
+from kinoforge.contract import Meter, ModelRef, no_meter
 
 
 class Complete(Protocol):
     def __call__(
         self, purpose: str, system: str, user: str, *,
         route: ModelRef, temperature: float, max_tokens: int,
-    ) -> Tuple[str, Dict]: ...
+    ) -> tuple[str, dict]: ...
 
 
 class CompleteJson(Protocol):
     def __call__(
         self, purpose: str, system: str, user: str, *,
         route: ModelRef, temperature: float, max_tokens: int,
-    ) -> Dict: ...
+    ) -> dict: ...
 
 
 class ParseJson(Protocol):
-    def __call__(self, text: str) -> Dict: ...
+    def __call__(self, text: str) -> dict: ...
 
 
 class Prompt(Protocol):
@@ -49,4 +49,4 @@ class StoryPorts:
     contract: Contract
     language_rule: LanguageRule
     story_budget: StoryBudget
-    meter: Meter = _no_meter
+    meter: Meter = no_meter

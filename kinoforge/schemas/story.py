@@ -1,14 +1,14 @@
 """Story segment schemas: write context/request/response and the edit-operation request."""
 
 from enum import StrEnum
-from typing import Any, Dict, List
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from kinoforge.schemas.common import (
     DefinitionBundleRequest,
-    LoggableRequest,
     LogEntryResponse,
+    LoggableRequest,
     MeterEventResponse,
 )
 
@@ -22,10 +22,10 @@ class StoryContextRequest(BaseModel):
     aspect_ratio: str = "9:16"
     language: str = ""
     genre: str = ""
-    cast: List[Dict[str, Any]] = Field(default_factory=list)
+    cast: list[dict[str, Any]] = Field(default_factory=list)
     premise: str = ""
     series_name: str = ""
-    series_episodes: List[Dict[str, Any]] = Field(
+    series_episodes: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Frozen ordered episode slate/history for continuity-aware screenwriters.",
     )
@@ -41,14 +41,14 @@ class StoryWriteRequest(LoggableRequest):
     project_id: str = Field(default="", description="Caller-owned durable project identifier.")
     owner: str = Field(default="", description="Opaque tenant or owner identifier.")
     context: StoryContextRequest = Field(description="What the screenwriter writes from.")
-    agent: Dict[str, Any] = Field(
+    agent: dict[str, Any] = Field(
         description="Resolved screenwriter: ordered stages, persona, per-stage model overrides.",
     )
-    pick: Dict[str, Any] = Field(
+    pick: dict[str, Any] = Field(
         default_factory=dict,
         description="Resolved default text route {provider, model} for stages without overrides.",
     )
-    config: Dict[str, Any] = Field(
+    config: dict[str, Any] = Field(
         default_factory=dict,
         description="Resolved output-token budgets and other runtime config.",
     )
@@ -58,11 +58,11 @@ class StoryWriteRequest(LoggableRequest):
 
 
 class StoryWriteResponse(BaseModel):
-    result: Dict[str, Any] = Field(
+    result: dict[str, Any] = Field(
         description="Run result: {ok, story, warnings, usage} or {ok: False, error}.",
     )
-    meter_events: List[MeterEventResponse] = Field(default_factory=list)
-    logs: List[LogEntryResponse] = Field(default_factory=list)
+    meter_events: list[MeterEventResponse] = Field(default_factory=list)
+    logs: list[LogEntryResponse] = Field(default_factory=list)
 
 
 class StoryOperation(StrEnum):
@@ -81,19 +81,19 @@ class StoryOperationRequest(LoggableRequest):
     project_id: str = ""
     owner: str = ""
     operation: StoryOperation
-    payload: Dict[str, Any] = Field(
+    payload: dict[str, Any] = Field(
         default_factory=dict,
         description="Operation input: project/story, scene index, language, or instructions.",
     )
-    agent: Dict[str, Any] = Field(default_factory=dict)
-    pick: Dict[str, Any] = Field(default_factory=dict)
-    config: Dict[str, Any] = Field(
+    agent: dict[str, Any] = Field(default_factory=dict)
+    pick: dict[str, Any] = Field(default_factory=dict)
+    config: dict[str, Any] = Field(
         default_factory=dict, description="Resolved rewrite and translation token budgets."
     )
     definitions: DefinitionBundleRequest
 
 
 class StoryOperationResponse(BaseModel):
-    result: Dict[str, Any]
-    meter_events: List[MeterEventResponse] = Field(default_factory=list)
-    logs: List[LogEntryResponse] = Field(default_factory=list)
+    result: dict[str, Any]
+    meter_events: list[MeterEventResponse] = Field(default_factory=list)
+    logs: list[LogEntryResponse] = Field(default_factory=list)

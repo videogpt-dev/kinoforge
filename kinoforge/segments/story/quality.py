@@ -9,7 +9,6 @@ decides whether to keep the story or regenerate, rather than paying to rewrite o
 """
 
 import re
-from typing import Dict, List, Tuple
 
 
 class StoryQualityGate:
@@ -23,17 +22,17 @@ class StoryQualityGate:
         re.IGNORECASE,
     )
 
-    def __init__(self, story: Dict, ctx: Dict) -> None:
+    def __init__(self, story: dict, ctx: dict) -> None:
         self._story = story
         self._ctx = ctx
 
-    def evaluate(self) -> Tuple[List[str], List[str]]:
+    def evaluate(self) -> tuple[list[str], list[str]]:
         """Blocking = the plan cannot become film, so the run stops. Advisory = usable but
         worth flagging, so the story proceeds with the messages attached as warnings and the
         user decides. Both lists empty means a clean story."""
         scenes = self._story.get("scenes") or []
-        blocking: List[str] = []
-        advisory: List[str] = []
+        blocking: list[str] = []
+        advisory: list[str] = []
         expected = int(self._ctx.get("scene_count") or 0)
 
         # Blocking: a scene with no narration has no voiceover to speak or time against.

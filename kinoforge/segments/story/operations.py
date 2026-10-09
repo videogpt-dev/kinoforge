@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, List, Optional, Union
+from enum import Enum
 
 from kinoforge.contract import ModelRef
 from kinoforge.segments.story.agent import clean_text, strip_dashes
@@ -9,11 +9,20 @@ from kinoforge.segments.story.languages import LANGUAGES, language_name
 from kinoforge.segments.story.ports import StoryPorts
 
 
-# suggestion kind -> (prompt key, max output tokens)
-_SUGGESTIONS = {
-    "title": ("story_suggest_title", 200),
-    "description": ("story_suggest_description", 300),
-}
+class Suggestion(Enum):
+    """A field the writer can suggest: its prompt and output-token allowance."""
+
+    TITLE = ("title", "story_suggest_title", 200)
+    DESCRIPTION = ("description", "story_suggest_description", 300)
+
+    def __init__(self, kind: str, prompt_key: str, max_tokens: int) -> None:
+        self.kind = kind
+        self.prompt_key = prompt_key
+        self.max_tokens = max_tokens
+
+    @classmethod
+    def of(cls, kind: str) -> "Suggestion | None":
+        return next((item for item in cls if item.kind == kind), None)
 
 
 class StoryOperations:
@@ -21,29 +30,21 @@ class StoryOperations:
         self.ports = ports
 
     def _ask_json(
-        self, purpose: str, system: str, prompt: str, route: Optional[ModelRef],
+        self, purpose: str, system: str, prompt: str, route: ModelRef | None,
         temperature: float, max_tokens: int,
-    ) -> Dict:
+    ) -> dict:
         return self.ports.complete_json(
             purpose, system, prompt, route=route or ModelRef(),
             temperature=temperature, max_tokens=max_tokens,
         )
 
-    def _agent_voice(self, agent: Dict) -> str:
+    def _agent_voice(self, agent: dict) -> str:
+        """The same voice RunAgent writes with: the agent's persona, else the global default."""
         persona = str(agent.get("persona") or "").strip()
-        if persona:
-            return persona
-        stages = agent.get("stages") or []
-        for stage in reversed(stages):
-            if stage.get("format") == "story_json" and str(stage.get("system") or "").strip():
-                return str(stage["system"])
-        for stage in stages:
-            if str(stage.get("system") or "").strip():
-                return str(stage["system"])
-        return self.ports.prompt("story_system")
+        return persona or self.ports.prompt("story_system")
 
     @staticmethod
-    def _story_summary(story: Dict) -> str:
+    def _story_summary(story: dict) -> str:
         characters = "; ".join(
             f"{character.get('name')}: {character.get('description')}"
             for character in story.get("characters") or []
@@ -56,13 +57,13 @@ class StoryOperations:
 
     def rewrite_scene(
         self,
-        rec: Dict,
+        rec: dict,
         index: int,
-        agent: Dict,
+        agent: dict,
         instructions: str = "",
-        route: Optional[ModelRef] = None,
+        route: ModelRef | None = None,
         max_tokens: int = 0,
-    ) -> Dict:
+    ) -> dict:
         story = rec.get("story") or {}
         scenes = story.get("scenes") or []
         if not 0 <= index < len(scenes):
@@ -94,11 +95,11 @@ class StoryOperations:
 
     def rewrite_characters(
         self,
-        rec: Dict,
-        agent: Dict,
-        route: Optional[ModelRef] = None,
+        rec: dict,
+        agent: dict,
+        route: ModelRef | None = None,
         max_tokens: int = 0,
-    ) -> Dict:
+    ) -> dict:
         story = rec.get("story") or {}
         scenes_text = "\n".join(
             f"- {scene.get('narration', '')}" for scene in (story.get("scenes") or [])[:12]
@@ -126,11 +127,11 @@ class StoryOperations:
 
     def translate(
         self,
-        story: Dict,
+        story: dict,
         language: str,
-        route: Optional[ModelRef] = None,
+        route: ModelRef | None = None,
         max_tokens: int = 0,
-    ) -> Dict:
+    ) -> dict:
         entry = LANGUAGES.get(language.strip())
         if not entry:
             return {"ok": False, "error": "unsupported language"}
@@ -168,7 +169,7 @@ class StoryOperations:
         }
 
     @staticmethod
-    def _translated_lines(narration: object, scenes: List[Dict]) -> Union[List[str], str]:
+    def _translated_lines(narration: object, scenes: list[dict]) -> list[str] | str:
         """The cleaned translated lines, or the reason the translation is unusable."""
         if not isinstance(narration, list) or len(narration) != len(scenes):
             count = len(narration) if isinstance(narration, list) else 0
@@ -185,10 +186,10 @@ class StoryOperations:
 
     def direct_shots(
         self,
-        rec: Dict,
-        route: Optional[ModelRef] = None,
+        rec: dict,
+        route: ModelRef | None = None,
         max_tokens: int = 0,
-    ) -> Dict:
+    ) -> dict:
         story = rec.get("story") or {}
         scenes = story.get("scenes") or []
         if not scenes:
@@ -248,7 +249,7 @@ class StoryOperations:
         refusals = ("i cannot", "i can't", "i'm sorry", "as an ai", "cannot assist", "unable to")
         if any(marker in lowered for marker in refusals):
             return False
-        return len(value) <= 160 if kind == "title" else len(value) >= 15
+        return len(value) <= 160 if kind == Suggestion.TITLE.kind else len(value) >= 15
 
     def _suggest_once(
         self, kind: str, system: str, user: str, route: ModelRef, max_tokens: int
@@ -256,7 +257,7 @@ class StoryOperations:
         text, _ = self.ports.complete(
             "suggest", system, user, route=route, temperature=0.8, max_tokens=max_tokens
         )
-        return self._clean_suggestion(text, kind == "title")
+        return self._clean_suggestion(text, kind == Suggestion.TITLE.kind)
 
     def suggest_field(
         self,
@@ -264,13 +265,14 @@ class StoryOperations:
         title: str = "",
         description: str = "",
         idea: str = "",
-        route: Optional[ModelRef] = None,
+        route: ModelRef | None = None,
         fallback_model: str = "",
-    ) -> Dict:
-        if kind not in _SUGGESTIONS:
+    ) -> dict:
+        suggestion = Suggestion.of(kind)
+        if suggestion is None:
             return {"ok": False, "error": "unknown suggestion kind"}
-        prompt_key, max_tokens = _SUGGESTIONS[kind]
-        system = self.ports.prompt(prompt_key)
+        max_tokens = suggestion.max_tokens
+        system = self.ports.prompt(suggestion.prompt_key)
         user = json.dumps(
             {"title": title.strip(), "description": description.strip(), "idea": idea.strip()},
             ensure_ascii=False,

@@ -67,5 +67,5 @@ class Meter(Protocol):
     def __call__(self, action: MeterAction, qty: float, variant: str = "") -> None: ...
 
 
-def _no_meter(action: MeterAction, qty: float, variant: str = "") -> None:
+def no_meter(action: MeterAction, qty: float, variant: str = "") -> None:
     return None

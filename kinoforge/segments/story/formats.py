@@ -1,7 +1,6 @@
 """Supported generated-video canvases. Stored once on project input."""
 
 from enum import StrEnum
-from typing import Dict
 
 
 class VideoAspectRatio(StrEnum):
@@ -23,7 +22,7 @@ def normalize(value: object) -> str:
         return VideoAspectRatio.PORTRAIT.value
 
 
-def project_aspect(record: Dict) -> str:
+def project_aspect(record: dict) -> str:
     return normalize((record.get("input") or {}).get("aspect_ratio"))
 
 

@@ -90,4 +90,5 @@ def test_running_holds_the_lease_and_releases_it():
     with registry.running("job"):  # released: can run again
         pass
     with registry.running(None) as untracked:
-        assert untracked is None
+        assert not untracked.is_cancelled()
+        assert not registry.cancel("")

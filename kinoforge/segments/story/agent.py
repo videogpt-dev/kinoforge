@@ -8,9 +8,10 @@ breakdown; its strict schema comes from the `contract` fragment. Stage execution
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
-from typing import Any, Dict, List, Mapping
+from typing import Any
 
 from kinoforge.segments.story.formats import VideoAspectRatio, prompt_label
 from kinoforge.segments.story.languages import language_name
@@ -46,10 +47,10 @@ class StoryBrief:
     aspect_ratio: object = VideoAspectRatio.PORTRAIT
     language: str = ""
     genre: str = ""
-    cast: List[Dict] = field(default_factory=list)
+    cast: list[dict] = field(default_factory=list)
     premise: str = ""
     series_name: str = ""
-    series_episodes: List[Dict] = field(default_factory=list)
+    series_episodes: list[dict] = field(default_factory=list)
     series_position: int = 0
     mature: bool = False
 
@@ -65,7 +66,7 @@ class Screenwriter:
     def __init__(self, ports: StoryPorts) -> None:
         self.ports = ports
 
-    def build_context(self, brief: StoryBrief) -> Dict:
+    def build_context(self, brief: StoryBrief) -> dict:
         """The runtime facts an agent writes from (independent of which agent runs)."""
         series_cast = [
             {

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kinoforge.observ import active
-from kinoforge.schemas.common import DefinitionBundleRequest, LoggableRequest, LogEntryResponse
+from kinoforge.schemas.common import DefinitionBundleRequest, LogEntryResponse, LoggableRequest
 from kinoforge.segments.clips.render.media import AspectRatio, FillStyle, MasterQuality
 
 
@@ -75,7 +75,6 @@ class ImageRenderRequest(LoggableRequest):
 
 class ImageRenderResponse(BaseModel):
     image_b64: str = Field(description="Generated image, base64 encoded.")
-    prompt: str = Field(default="", description="Final provider prompt, for tracing.")
     observed_limit: int = Field(
         default=0, description="Provider-declared prompt ceiling learned this call; 0 when none."
     )

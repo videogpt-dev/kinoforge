@@ -6,7 +6,7 @@ voiceover). The provider call is injected; storage, billing and job state stay w
 caller.
 """
 
-from typing import Dict, Protocol
+from typing import Protocol
 
 from kinoforge.contract import ModelRef
 from kinoforge.segments.story.timing import NarrationTimer
@@ -27,16 +27,16 @@ class MusicComposer:
         self._generate_music = generate_music
         self._music_preset = music_preset
 
-    def prompt(self, story: Dict) -> str:
+    def prompt(self, story: dict) -> str:
         mood = (story.get("style") or story.get("logline") or "cinematic").strip()
         return self._music_preset(mood)
 
-    def seconds(self, story: Dict) -> int:
+    def seconds(self, story: dict) -> int:
         total = sum(
             NarrationTimer.scene_seconds(scene) for scene in (story.get("scenes") or [])
         )
         return max(5, min(int(round(total)) or _MAX_MUSIC_SECONDS, _MAX_MUSIC_SECONDS))
 
-    def compose(self, story: Dict, ref: ModelRef) -> bytes:
+    def compose(self, story: dict, ref: ModelRef) -> bytes:
         """Music bytes for the story, sized to its scenes."""
         return self._generate_music(ref, self.prompt(story), seconds=self.seconds(story))

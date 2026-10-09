@@ -7,10 +7,11 @@ prompts and runs the clip call under the provider's prompt ceiling. The provider
 injected; billing, the director pass, seeds, store and placement stay with the caller.
 """
 
+from collections.abc import Callable
 from dataclasses import replace
-from typing import Callable, Dict, List
 
 from kinoforge.contract import ModelRef, VideoSpec
+from kinoforge.segments.story.audio_modes import uses_native_audio
 from kinoforge.segments.story.media.ceiling import PromptCeiling
 from kinoforge.segments.story.media.prompt_text import LabeledPrompt, PromptText
 
@@ -22,7 +23,7 @@ class ClipMaker:
         self._generate_video = generate_video
         self._ceiling = ceiling
 
-    def cast_in(self, story: Dict, scene_text: str = "", compact: bool = False) -> str:
+    def cast_in(self, story: dict, scene_text: str = "", compact: bool = False) -> str:
         """The film's cast, restated for a clip so a character the prompt does not describe
         is not redrawn differently in every clip. The whole (small) cast is carried; the
         shot's action still decides who is on screen."""
@@ -41,11 +42,11 @@ class ClipMaker:
         )
 
     @staticmethod
-    def _describe(character: Dict, compact: bool) -> str:
+    def _describe(character: dict, compact: bool) -> str:
         description = str(character.get("description") or "")
         return PromptText.leading_sentences(description, 2) if compact else description
 
-    def preset_key(self, rec: Dict, scene: Dict) -> str:
+    def preset_key(self, rec: dict, scene: dict) -> str:
         """The image preset this scene uses (its own pick, else the project's), so look and
         motion stay one choice."""
         return (scene.get("image_preset") or "").strip() or (
@@ -53,7 +54,7 @@ class ClipMaker:
         ).strip()
 
     def video_prompt(
-        self, scene: Dict, shot: Dict, story: Dict, motion: str = "", max_chars: int = 0
+        self, scene: dict, shot: dict, story: dict, motion: str = "", max_chars: int = 0
     ) -> str:
         """One clip's prompt: what moves, how the camera moves, who is in it, and what
         carries over from the shot before. `motion` is the image preset's cinematography
@@ -84,16 +85,14 @@ class ClipMaker:
         ]
         return LabeledPrompt(compact_parts).fit(max_chars)
 
-    def _spoken_line(self, scene: Dict) -> str:
+    def _spoken_line(self, scene: dict) -> str:
         """The exact words a native-audio clip should voice: the scene's narration, kept
         verbatim so the spoken track matches the script."""
-        from kinoforge.segments.story.audio_modes import uses_native_audio
-
         if not uses_native_audio(scene):
             return ""
         return (scene.get("narration") or "").strip()
 
-    def to_animate(self, scenes: List[Dict]) -> List[int]:
+    def to_animate(self, scenes: list[dict]) -> list[int]:
         """The indexes worth buying a clip for. The writer marks them (scenes[].motion);
         a story written before the field existed animates everything (as it did before),
         and only a deliberate "none" animates nothing."""
@@ -102,7 +101,7 @@ class ClipMaker:
         return [i for i, s in enumerate(scenes) if s.get("motion")]
 
     def generate_clip(
-        self, scene: Dict, story: Dict, motion: str, ref: ModelRef, spec: VideoSpec
+        self, scene: dict, story: dict, motion: str, ref: ModelRef, spec: VideoSpec
     ) -> bytes:
         """A native-audio scene voices its own dialogue: the spoken words go to the provider as
         structured `dialogue`, and music is turned off so speech stays clear."""

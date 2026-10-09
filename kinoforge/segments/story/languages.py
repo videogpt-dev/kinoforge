@@ -6,7 +6,6 @@ Whisper ISO code. Kept in one place so the table has a single home.
 """
 
 from enum import StrEnum
-from typing import Optional
 
 
 class NarrationLanguage(StrEnum):
@@ -48,7 +47,7 @@ LANGUAGES: dict = {
 }
 
 
-def whisper_code(language: str) -> Optional[str]:
+def whisper_code(language: str) -> str | None:
     """Whisper ISO code for a narration language key (None = auto-detect)."""
     entry = LANGUAGES.get((language or "").strip())
     return entry[1] if entry else None

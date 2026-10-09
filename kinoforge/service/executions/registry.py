@@ -39,11 +39,11 @@ class ExecutionRegistry:
             self._active.pop(execution_id, None)
 
     @contextmanager
-    def running(self, execution_id: Optional[str]) -> Generator[Optional[ExecutionControl]]:
+    def running(self, execution_id: Optional[str]) -> Generator[ExecutionControl]:
         """Hold `execution_id` active for the block (raises ExecutionConflict if it already is);
-        no id means an untracked run and yields None."""
+        no id means an untracked run: its control is never registered, so never cancelled."""
         if not execution_id:
-            yield None
+            yield ExecutionControl("")
             return
         control = self.begin(execution_id)
         try:

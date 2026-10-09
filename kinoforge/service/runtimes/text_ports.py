@@ -5,14 +5,16 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
-from kinoforge.contract import Meter, ModelRef, _no_meter
+from kinoforge.contract import Meter, ModelRef, no_meter
 from kinoforge.definitions import DefinitionRenderer
 from kinoforge.definitions.models import DefinitionKind
 from kinoforge.inference import InfrelayClient
 from kinoforge.observ import active
 from kinoforge.segments.story.ports import StoryPorts
+
+_TRAILING_COMMA = re.compile(r",\s*([}\]])")
 
 
 class InfrelayTextPorts:
@@ -21,11 +23,11 @@ class InfrelayTextPorts:
         infrelay: InfrelayClient,
         renderer: DefinitionRenderer,
         *,
-        budgets: Dict[str, Any],
+        budgets: dict[str, Any],
         label: str,
-        meter: Meter = _no_meter,
-        contract_key: Optional[str] = None,
-        language_key: Optional[str] = None,
+        meter: Meter = no_meter,
+        contract_key: str | None = None,
+        language_key: str | None = None,
     ) -> None:
         self._infrelay = infrelay
         self._renderer = renderer
@@ -46,7 +48,7 @@ class InfrelayTextPorts:
     def complete(
         self, purpose: str, system: str, user: str, *,
         route: ModelRef, temperature: float, max_tokens: int,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         if not route.provider:
             raise RuntimeError(f"{self._label} text route is missing a provider")
         active().debug(f"{self._label} text call: {purpose}", route=str(route),
@@ -58,22 +60,26 @@ class InfrelayTextPorts:
     def complete_json(
         self, purpose: str, system: str, user: str, *,
         route: ModelRef, temperature: float, max_tokens: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         text, _ = self.complete(
             purpose, system, user, route=route, temperature=temperature, max_tokens=max_tokens
         )
         return self.parse_json(text)
 
     @staticmethod
-    def parse_json(text: str) -> Dict[str, Any]:
-        """The JSON object out of a completion, whatever the model wrapped it in."""
+    def parse_json(text: str) -> dict[str, Any]:
+        """The JSON object out of a completion, whatever the model wrapped it in. Raw line
+        breaks inside strings and trailing commas, two common model slips, are tolerated."""
         s = (text or "").strip()
         if s.startswith("```"):
             s = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", s).strip()
         start, end = s.find("{"), s.rfind("}")
         if start != -1 and end > start:
             s = s[start : end + 1]
-        return json.loads(s)
+        try:
+            return json.loads(s, strict=False)
+        except json.JSONDecodeError:
+            return json.loads(_TRAILING_COMMA.sub(r"\1", s), strict=False)
 
     def prompt(self, key: str, **params: object) -> str:
         return self._renderer.render(DefinitionKind.AGENT, key, **params)
@@ -93,11 +99,12 @@ class InfrelayTextPorts:
         )
 
     def story_budget(self, stage_override: object = None) -> int:
+        """A stage's own token budget, capped by the platform ceiling; 0 means no ceiling."""
         limit = int(self._budgets.get("story") or 0)
-        if stage_override in (None, ""):
-            return limit
         try:
-            requested = int(str(stage_override))
+            requested = int(str(stage_override)) if stage_override not in (None, "") else 0
         except (TypeError, ValueError):
+            requested = 0
+        if requested <= 0:
             return limit
-        return min(requested, limit) if requested > 0 else limit
+        return min(requested, limit) if limit > 0 else requested

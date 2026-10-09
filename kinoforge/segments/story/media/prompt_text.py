@@ -3,6 +3,8 @@
 import re
 from typing import Any
 
+NAME_FILLERS = frozenset({"the", "and", "mr", "mrs", "ms", "dr", "sir", "miss", "mister"})
+
 
 class PromptText:
     """Text shaping for media prompts: complete-sentence trims and cast-mention detection."""
@@ -17,8 +19,8 @@ class PromptText:
     def mentioned_characters(
         characters: list[dict[str, Any]], text: str
     ) -> list[dict[str, Any]]:
-        """Return cast explicitly referenced by name or role in scene direction."""
-        haystack = (text or "").casefold()
+        """Return cast explicitly referenced by name or role in scene direction, matching
+        whole words only so "Max" is not found in "maximum"."""
         mentioned = []
         for character in characters:
             name = str(character.get("name") or "").strip()
@@ -27,11 +29,17 @@ class PromptText:
             sections = [
                 part.strip() for part in re.split(r"\s+(?:—|–|-)\s+", name) if part.strip()
             ]
-            personal = sections[0].split()
-            aliases = {name, sections[0], *sections[1:], *personal}
-            if any(alias.casefold() in haystack for alias in aliases if len(alias) >= 3):
+            aliases = {name, sections[0], *sections[1:], *sections[0].split()}
+            if any(PromptText._names(alias, text) for alias in aliases):
                 mentioned.append(character)
         return mentioned
+
+    @staticmethod
+    def _names(alias: str, text: str) -> bool:
+        word = alias.strip(".,;:")
+        if len(word) < 3 or word.casefold() in NAME_FILLERS:
+            return False
+        return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text or "", re.IGNORECASE) is not None
 
 
 class LabeledPrompt:

@@ -10,19 +10,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Dict, Optional
+from typing import Any, assert_never
 
 from kinoforge.contract import ModelRef
 from kinoforge.definitions import DefinitionBundle, DefinitionRenderer
 from kinoforge.observ import KinoLogger, bind, build_logger, logged, reset
+from kinoforge.schemas import StoryOperation, StoryOperationRequest, StoryWriteRequest
 from kinoforge.segments.story.agent import Screenwriter, StoryBrief
 from kinoforge.segments.story.operations import StoryOperations
 from kinoforge.segments.story.ports import StoryPorts
 from kinoforge.segments.story.run_agent import RunAgent
 from kinoforge.service.meter import EventMeter
-from kinoforge.schemas import StoryOperation, StoryOperationRequest, StoryWriteRequest
-from kinoforge.service.settings import ServiceSettings
 from kinoforge.service.runtimes.text_ports import InfrelayTextPorts
+from kinoforge.service.settings import ServiceSettings
 
 CONTRACT_KEY = "prompts.fragments.contract"
 LANGUAGE_KEY = "prompts.fragments.language"
@@ -37,7 +37,7 @@ class StorySession:
     meter: EventMeter
     route: ModelRef
 
-    def response(self, result: Any) -> Dict[str, Any]:
+    def response(self, result: Any) -> dict[str, Any]:
         return {"result": result, "meter_events": self.meter.events, "logs": self.logger.entries}
 
 
@@ -46,7 +46,7 @@ class StoryRuntime:
         self._settings = settings
 
     @classmethod
-    def from_env(cls) -> "StoryRuntime":
+    def from_env(cls) -> StoryRuntime:
         return cls(ServiceSettings.from_env())
 
     def _session(self, request: StoryWriteRequest | StoryOperationRequest) -> StorySession:
@@ -75,8 +75,8 @@ class StoryRuntime:
     def write(
         self,
         request: StoryWriteRequest,
-        is_cancelled: Optional[Callable[[], bool]] = None,
-    ) -> Dict[str, Any]:
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
         session = self._session(request)
         ctx = self._writer_context(session.ports, request)
         token = bind(session.logger)
@@ -98,7 +98,7 @@ class StoryRuntime:
         logger.info(f"Story stage {index + 1}/{total}: {role}", stage=role)
 
     @staticmethod
-    def _writer_context(ports: StoryPorts, request: StoryWriteRequest) -> Dict[str, Any]:
+    def _writer_context(ports: StoryPorts, request: StoryWriteRequest) -> dict[str, Any]:
         fields = request.context.model_dump()
         ctx = Screenwriter(ports).build_context(StoryBrief.from_mapping(fields))
         # Caller-set flags the writer reads (e.g. require_motion for the Video-Mode quality
@@ -108,7 +108,7 @@ class StoryRuntime:
         return ctx
 
     @logged
-    def operate(self, request: StoryOperationRequest) -> Dict[str, Any]:
+    def operate(self, request: StoryOperationRequest) -> dict[str, Any]:
         session = self._session(request)
         token = bind(session.logger)
         try:
@@ -120,14 +120,17 @@ class StoryRuntime:
     @staticmethod
     def _dispatch(
         operations: StoryOperations, request: StoryOperationRequest, route: ModelRef
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         payload = request.payload
         budgets = request.config.get("budgets") or {}
         match request.operation:
             case StoryOperation.REWRITE_SCENE:
+                index = payload.get("index")
+                if not isinstance(index, int) or isinstance(index, bool):
+                    return {"ok": False, "error": "a scene index is required"}
                 return operations.rewrite_scene(
                     dict(payload.get("record") or {}),
-                    int(payload.get("index") or 0),
+                    index,
                     request.agent,
                     str(payload.get("instructions") or ""),
                     route,
@@ -153,7 +156,7 @@ class StoryRuntime:
                     route,
                     int(budgets.get("rewrite") or 0),
                 )
-            case _:
+            case StoryOperation.SUGGEST_FIELD:
                 return operations.suggest_field(
                     str(payload.get("kind") or ""),
                     str(payload.get("title") or ""),
@@ -162,3 +165,5 @@ class StoryRuntime:
                     route,
                     str(request.config.get("fallback_model") or ""),
                 )
+            case unreachable:
+                assert_never(unreachable)

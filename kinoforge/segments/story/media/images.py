@@ -5,7 +5,7 @@ provider's prompt ceiling. The provider call and style presets are injected; the
 store, reference-sheet composition, placement and progress stay with the caller.
 """
 
-from typing import Callable, Dict, List
+from collections.abc import Callable
 
 from kinoforge.contract import ImageSpec, ModelRef
 from kinoforge.segments.story.media.ceiling import PromptCeiling
@@ -30,10 +30,10 @@ class ImagePainter:
         self._image_negative = image_negative
         self._ceiling = ceiling
 
-    def character_prompt(self, story: Dict, rec: Dict, max_chars: int = 0) -> str:
+    def character_prompt(self, story: dict, rec: dict, max_chars: int = 0) -> str:
         """The character-sheet prompt, or "" when the story has no described cast."""
-        chars = story.get("characters") or []
-        who = "; ".join(f"{c['name']}: {c['description']}" for c in chars if c.get("description"))
+        chars = [c for c in story.get("characters") or [] if c.get("description")]
+        who = "; ".join(self._who(c, str(c["description"])) for c in chars)
         if not who:
             return ""
         style = story.get("style") or ""
@@ -42,16 +42,19 @@ class ImagePainter:
         if not max_chars or len(prompt) <= max_chars:
             return prompt
         compact_who = "; ".join(
-            f"{c['name']}: {PromptText.leading_sentences(str(c['description']), 2)}"
-            for c in chars
-            if c.get("name") and c.get("description")
+            self._who(c, PromptText.leading_sentences(str(c["description"]), 2)) for c in chars
         )
         compact = self._image_character(
             compact_who, PromptText.leading_sentences(style, 2), key=key or None
         )
         return LabeledPrompt([("Character sheet", compact)]).fit(max_chars)
 
-    def with_character_traits(self, prompt: str, characters: List[Dict]) -> str:
+    @staticmethod
+    def _who(character: dict, description: str) -> str:
+        name = str(character.get("name") or "").strip()
+        return f"{name}: {description}" if name else description
+
+    def with_character_traits(self, prompt: str, characters: list[dict]) -> str:
         """Add concise appearance anchors only for cast referenced by this scene."""
         low = prompt.lower()
         traits = [
@@ -68,7 +71,7 @@ class ImagePainter:
             f"they appear: {'; '.join(traits)}"
         )
 
-    def image_preset_key(self, rec: Dict, scene: Dict) -> str:
+    def image_preset_key(self, rec: dict, scene: dict) -> str:
         """The image style this scene uses: its own pick, else the project's, else "" (the
         default Cinematic look)."""
         scene_key = (scene.get("image_preset") or "").strip()
@@ -76,7 +79,7 @@ class ImagePainter:
             return scene_key
         return ((rec.get("input") or {}).get("image_preset") or "").strip()
 
-    def scene_prompt(self, scene: Dict, story: Dict, rec: Dict, max_chars: int = 0) -> str:
+    def scene_prompt(self, scene: dict, story: dict, rec: dict, max_chars: int = 0) -> str:
         prompt = self.with_character_traits(
             scene.get("prompt") or "", story.get("characters") or []
         )

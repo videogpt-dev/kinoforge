@@ -8,7 +8,7 @@ import base64
 from dataclasses import replace
 from functools import partial
 from string import Template
-from typing import Any, Dict, Optional
+from typing import Any
 
 from kinoforge.contract import ImageSpec, ModelRef, VideoSpec
 from kinoforge.definitions import DefinitionBundle
@@ -29,12 +29,19 @@ from kinoforge.service.runtimes.presets import BundleImagePresets
 from kinoforge.service.settings import ServiceSettings
 
 
-def _decode(value: Optional[str]) -> Optional[bytes]:
-    return base64.b64decode(value) if value else None
+class MediaUtils:
+    @staticmethod
+    def decode(value: str | None) -> bytes | None:
+        return base64.b64decode(value) if value else None
 
+    @staticmethod
+    def no_media(*_args: Any) -> bytes:
+        return b""
 
-def _no_media(*_args: Any) -> bytes:
-    return b""
+    @staticmethod
+    def music_prompt(body: str, mood: str) -> str:
+        """The music preset with its mood filled in; any other `$` is left as written."""
+        return Template(body).safe_substitute({"mood": mood}).strip()
 
 
 class MediaRuntime:
@@ -42,7 +49,7 @@ class MediaRuntime:
         self._settings = settings
 
     @classmethod
-    def from_env(cls) -> "MediaRuntime":
+    def from_env(cls) -> MediaRuntime:
         return cls(ServiceSettings.from_env())
 
     @staticmethod
@@ -80,8 +87,8 @@ class MediaRuntime:
         )
 
     @staticmethod
-    def _motion(presets: BundleImagePresets, maker: ClipMaker, scene: Dict, story: Dict,
-                rec: Dict) -> str:
+    def _motion(presets: BundleImagePresets, maker: ClipMaker, scene: dict, story: dict,
+                rec: dict) -> str:
         """The picked image preset's cinematography line, applied film-wide."""
         return presets.image_motion(
             scene.get("prompt") or "", story.get("style") or "",
@@ -89,7 +96,7 @@ class MediaRuntime:
         )
 
     @logged
-    def render_image(self, request: ImageRenderRequest) -> Dict[str, object]:
+    def render_image(self, request: ImageRenderRequest) -> dict[str, object]:
         logger = self._logger(request, "image")
         logger.info(f"image render start ({request.mode})", mode=request.mode)
         ceiling = PromptCeiling(request.prompt_limit)
@@ -99,7 +106,7 @@ class MediaRuntime:
         opts = request.options
         spec = ImageSpec(
             aspect_ratio=opts.aspect_ratio, seed=opts.seed, mature=opts.mature,
-            reference=_decode(request.reference_b64), enhance=opts.enhance,
+            reference=MediaUtils.decode(request.reference_b64), enhance=opts.enhance,
             enhance_style=opts.enhance_style,
         )
         story, rec = dict(request.story), dict(request.rec)
@@ -113,13 +120,12 @@ class MediaRuntime:
         logger.success("image render done", bytes=len(data), observed_limit=ceiling.learned)
         return {
             "image_b64": base64.b64encode(data).decode(),
-            "prompt": "",
             "observed_limit": ceiling.learned,
             "logs": logger.entries,
         }
 
     @logged
-    def render_clip(self, request: VideoRenderRequest) -> Dict[str, object]:
+    def render_clip(self, request: VideoRenderRequest) -> dict[str, object]:
         logger = self._logger(request, "video")
         logger.info("video render start")
         ceiling = PromptCeiling(request.prompt_limit)
@@ -130,7 +136,7 @@ class MediaRuntime:
         opts = request.options
         spec = VideoSpec(
             seconds=opts.seconds, resolution=opts.resolution, aspect_ratio=opts.aspect_ratio,
-            mature=opts.mature, image=_decode(request.image_b64), enhance=opts.enhance,
+            mature=opts.mature, image=MediaUtils.decode(request.image_b64), enhance=opts.enhance,
             enhance_style=opts.enhance_style,
         )
         motion = self._motion(self._presets(request), maker, scene, story, rec)
@@ -143,20 +149,20 @@ class MediaRuntime:
         }
 
     @logged
-    def render_music(self, request: MusicRenderRequest) -> Dict[str, object]:
+    def render_music(self, request: MusicRenderRequest) -> dict[str, object]:
         logger = self._logger(request, "music")
         logger.info("music render start")
         body = self._bundle(request).require(DefinitionKind.PRESET, request.music_key).body
         composer = MusicComposer(
             generate_music=self._settings.infrelay(request.owner).music,
-            music_preset=lambda mood: Template(body).substitute({"mood": mood}).strip(),
+            music_preset=partial(MediaUtils.music_prompt, body),
         )
         data = composer.compose(dict(request.story), ModelRef.from_mapping(request.pick))
         logger.success("music render done", bytes=len(data))
         return {"music_b64": base64.b64encode(data).decode(), "logs": logger.entries}
 
     @logged
-    def render_voice(self, request: VoiceRenderRequest) -> Dict[str, object]:
+    def render_voice(self, request: VoiceRenderRequest) -> dict[str, object]:
         logger = self._logger(request, "voice")
         logger.info("voice render start")
         data = self._settings.infrelay(request.owner).speech(
@@ -166,10 +172,10 @@ class MediaRuntime:
         logger.success("voice render done", bytes=len(data))
         return {"audio_b64": base64.b64encode(data).decode(), "logs": logger.entries}
 
-    def preview_prompts(self, request: StoryPromptPreviewRequest) -> Dict[str, str]:
+    def preview_prompts(self, request: StoryPromptPreviewRequest) -> dict[str, str]:
         presets = self._presets(request)
-        painter = self._painter(presets, _no_media, PromptCeiling())
-        maker = ClipMaker(generate_video=_no_media, ceiling=PromptCeiling())
+        painter = self._painter(presets, MediaUtils.no_media, PromptCeiling())
+        maker = ClipMaker(generate_video=MediaUtils.no_media, ceiling=PromptCeiling())
         story, scene, rec = dict(request.story), dict(request.scene), dict(request.rec)
         return {
             "image_prompt": painter.scene_prompt(scene, story, rec, request.image_limit),
