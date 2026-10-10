@@ -256,3 +256,19 @@ def test_render_reports_each_prompt_rewrite_infrelay_ran(monkeypatch):
     cached = runtime.render_image(_image_request("scene", options=options))
     assert first["enhance"] == [{"provider": "openrouter", "model": "m", "credits": 2}]
     assert cached["enhance"] == []
+
+
+def test_a_scene_with_a_reference_is_told_what_the_reference_is_for(monkeypatch):
+    seen = {}
+
+    def image(self, ref, prompt, spec):
+        seen["prompt"] = prompt
+        return PNG
+
+    fake(monkeypatch, "image", image)
+    runtime = MediaRuntime(SETTINGS)
+    runtime.render_image(_image_request("scene"))
+    assert "reference image" not in seen["prompt"]
+    sheet = base64.b64encode(b"sheet").decode()
+    runtime.render_image(_image_request("scene", reference_b64=sheet))
+    assert seen["prompt"].startswith("a lighthouse. Match the reference image")

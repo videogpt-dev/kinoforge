@@ -112,7 +112,10 @@ class MediaRuntime:
         if request.mode == "character":
             prompt = partial(painter.character_prompt, story, rec)
         else:
-            prompt = partial(painter.scene_prompt, dict(request.scene), story, rec)
+            prompt = partial(
+                painter.scene_prompt, dict(request.scene), story, rec,
+                referenced=spec.reference is not None,
+            )
             if opts.apply_negative:
                 spec = replace(spec, negative=painter.negative())
         data = painter.generate_for(prompt, ModelRef.from_mapping(request.pick), spec)

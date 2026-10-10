@@ -13,6 +13,11 @@ from kinoforge.segments.story.media.prompt_text import LabeledPrompt, PromptText
 
 GenerateImage = Callable[[ModelRef, str, ImageSpec], bytes]
 
+REFERENCE_ANCHOR = (
+    "Match the reference image for how the characters and products look (faces, hair, "
+    "clothing, colors, logos), but compose this new shot instead of copying the reference"
+)
+
 
 class ImagePainter:
     def __init__(
@@ -79,10 +84,20 @@ class ImagePainter:
             return scene_key
         return ((rec.get("input") or {}).get("image_preset") or "").strip()
 
-    def scene_prompt(self, scene: dict, story: dict, rec: dict, max_chars: int = 0) -> str:
+    @staticmethod
+    def with_reference(prompt: str) -> str:
+        """A reference image only anchors identity when the model is told what it is for;
+        unexplained, edit-style models tend to return the reference itself."""
+        return f"{prompt.rstrip('. ')}. {REFERENCE_ANCHOR}." if prompt else prompt
+
+    def scene_prompt(
+        self, scene: dict, story: dict, rec: dict, max_chars: int = 0, *, referenced: bool = False
+    ) -> str:
         prompt = self.with_character_traits(
             scene.get("prompt") or "", story.get("characters") or []
         )
+        if referenced:
+            prompt = self.with_reference(prompt)
         style = story.get("style") or ""
         key = self.image_preset_key(rec, scene)
         if not style and not key:
