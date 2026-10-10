@@ -155,3 +155,19 @@ def test_rewrite_uses_the_same_voice_as_writing():
 def test_story_budget_without_a_ceiling_keeps_the_stage_budget(ceiling, stage, expected):
     ports = InfrelayTextPorts(None, None, budgets={"story": ceiling}, label="story")
     assert ports.story_budget(stage) == expected
+
+
+def test_a_gateway_failure_is_a_502_with_its_reason(monkeypatch):
+    from kinoforge.api.app import app
+    from kinoforge.inference.infrelay import InfrelayError
+    from kinoforge.service.runtimes.media import MediaRuntime
+
+    def render_voice(self, request):
+        raise InfrelayError("infrelay audio/edge failed (429): busy")
+
+    monkeypatch.setattr(MediaRuntime, "from_env", classmethod(lambda cls: object.__new__(cls)))
+    monkeypatch.setattr(MediaRuntime, "render_voice", render_voice)
+    body = {"job_id": "j", "text": "hi", "pick": {"provider": "edge", "model": ""}}
+    response = TestClient(app).post("/v1/segments/story/media/voice", json=body)
+    assert response.status_code == 502
+    assert "busy" in response.json()["detail"]

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from kinoforge.api.observe import log_requests
 from kinoforge.api.routers import ALL as ROUTERS
+from kinoforge.inference.infrelay import InfrelayError
 from kinoforge.service.executions import ExecutionConflict
 
 app = FastAPI(
@@ -37,6 +38,11 @@ app.middleware("http")(log_requests)
 @app.exception_handler(ExecutionConflict)
 async def _execution_conflict(_request: Request, exc: ExecutionConflict) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(InfrelayError)
+async def _gateway_failed(_request: Request, exc: InfrelayError) -> JSONResponse:
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
 
 
 for _router in ROUTERS:
