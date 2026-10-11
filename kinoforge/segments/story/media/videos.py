@@ -34,7 +34,11 @@ class ClipMaker:
             and (character.get("description") or "").strip()
         ]
         if compact:
-            characters = PromptText.mentioned_characters(characters, scene_text)
+            characters = PromptText.mentioned_characters(
+                characters,
+                scene_text,
+                [str(s.get("prompt") or "") for s in story.get("scenes") or []],
+            )
         return "; ".join(
             f"{c.get('name')}: {self._describe(c, compact)}"
             for c in characters

@@ -59,12 +59,14 @@ class ImagePainter:
         name = str(character.get("name") or "").strip()
         return f"{name}: {description}" if name else description
 
-    def with_character_traits(self, prompt: str, characters: list[dict]) -> str:
+    def with_character_traits(
+        self, prompt: str, characters: list[dict], story_texts: list[str] | None = None
+    ) -> str:
         """Add concise appearance anchors only for cast referenced by this scene."""
         low = prompt.lower()
         traits = [
             f"{c['name']} is {PromptText.leading_sentences(str(c['description']), 2)}"
-            for c in PromptText.mentioned_characters(characters[:6], prompt)
+            for c in PromptText.mentioned_characters(characters[:6], prompt, story_texts)
             if (c.get("name") or "").strip()
             and (c.get("description") or "").strip()
             and c["description"].lower() not in low
@@ -94,7 +96,9 @@ class ImagePainter:
         self, scene: dict, story: dict, rec: dict, max_chars: int = 0, *, referenced: bool = False
     ) -> str:
         prompt = self.with_character_traits(
-            scene.get("prompt") or "", story.get("characters") or []
+            scene.get("prompt") or "",
+            story.get("characters") or [],
+            [str(s.get("prompt") or "") for s in story.get("scenes") or []],
         )
         if referenced:
             prompt = self.with_reference(prompt)

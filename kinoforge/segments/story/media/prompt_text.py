@@ -4,6 +4,9 @@ import re
 from typing import Any
 
 NAME_FILLERS = frozenset({"the", "and", "mr", "mrs", "ms", "dr", "sir", "miss", "mister"})
+# A cast word followed by the same word in this many scenes is a fixed phrase ("learner
+# car"), naming an object rather than the person.
+COMPOUND_SCENES = 3
 
 
 class PromptText:
@@ -17,10 +20,11 @@ class PromptText:
 
     @staticmethod
     def mentioned_characters(
-        characters: list[dict[str, Any]], text: str
+        characters: list[dict[str, Any]], text: str, story_texts: list[str] | None = None
     ) -> list[dict[str, Any]]:
         """Return cast explicitly referenced by name or role in scene direction, matching
-        whole words only so "Max" is not found in "maximum"."""
+        whole words only so "Max" is not found in "maximum". Given the story's other scene
+        texts, a name used inside a recurring phrase ("learner car") does not count."""
         mentioned = []
         for character in characters:
             name = str(character.get("name") or "").strip()
@@ -30,16 +34,31 @@ class PromptText:
                 part.strip() for part in re.split(r"\s+(?:—|–|-)\s+", name) if part.strip()
             ]
             aliases = {name, sections[0], *sections[1:], *sections[0].split()}
-            if any(PromptText._names(alias, text) for alias in aliases):
+            if any(PromptText._names(alias, text, story_texts or []) for alias in aliases):
                 mentioned.append(character)
         return mentioned
 
     @staticmethod
-    def _names(alias: str, text: str) -> bool:
+    def _names(alias: str, text: str, story_texts: list[str]) -> bool:
         word = alias.strip(".,;:")
         if len(word) < 3 or word.casefold() in NAME_FILLERS:
             return False
-        return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text or "", re.IGNORECASE) is not None
+        pattern = re.compile(rf"(?<!\w){re.escape(word)}(?!\w)(?: (\w+))?", re.IGNORECASE)
+        fixed = PromptText._fixed_followers(pattern, story_texts)
+        return any(
+            (match.group(1) or "").casefold() not in fixed for match in pattern.finditer(text or "")
+        )
+
+    @staticmethod
+    def _fixed_followers(pattern: re.Pattern[str], story_texts: list[str]) -> set[str]:
+        counts: dict[str, int] = {}
+        for story_text in story_texts:
+            for follower in {
+                (match.group(1) or "").casefold() for match in pattern.finditer(story_text or "")
+            }:
+                if follower:
+                    counts[follower] = counts.get(follower, 0) + 1
+        return {follower for follower, count in counts.items() if count >= COMPOUND_SCENES}
 
 
 class LabeledPrompt:

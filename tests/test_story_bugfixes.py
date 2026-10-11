@@ -128,6 +128,21 @@ def test_character_mentions_use_whole_words(name, text, mentioned):
     assert bool(found) is mentioned
 
 
+LESSON = [
+    "learner car stops at the STOP sign",
+    "wide view of the learner car at the corner",
+    "the learner car creeps forward",
+    "inside, the learner looks left",
+]
+
+
+def test_a_name_inside_a_recurring_phrase_is_not_the_person():
+    cast = [{"name": "learner"}]
+    assert PromptText.mentioned_characters(cast, LESSON[1], LESSON) == []
+    assert PromptText.mentioned_characters(cast, LESSON[3], LESSON) == cast
+    assert PromptText.mentioned_characters(cast, "the learner car, the learner waves", LESSON) == cast
+
+
 def test_rewrite_uses_the_same_voice_as_writing():
     captured = {}
 
