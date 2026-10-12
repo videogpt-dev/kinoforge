@@ -245,6 +245,11 @@ class RunAgent:
         if not self.story["scenes"]:
             return self._failure("story had no usable scenes")
         trimmed = self._trim_to_requested(self.story)
+        scenes = self.story["scenes"]
+        if self.ctx.get("require_motion") and not any(s["motion"] for s in scenes):
+            # Video Mode with no scene marked would buy no clips at all; animate every scene.
+            for scene in scenes:
+                scene["motion"] = True
         blocking, advisory = StoryQualityGate(self.story, self.ctx).evaluate()
         if trimmed:
             advisory.append(trimmed)

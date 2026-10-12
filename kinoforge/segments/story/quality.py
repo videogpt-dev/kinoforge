@@ -59,9 +59,4 @@ class StoryQualityGate:
         if text_prompts:
             advisory.append(f"scene prompts {', '.join(text_prompts)} may render on-screen text")
 
-        if self._ctx.get("require_motion") and scenes and not any(
-            s.get("motion") for s in scenes
-        ):
-            advisory.append("Video Mode set but no scene is marked for motion")
-
         return blocking, advisory

@@ -54,16 +54,3 @@ def test_quoted_text_prompt_is_advisory():
     story["scenes"][0]["prompt"] = 'a sign saying "OPEN"'
     _, advisory = validate_story(story, {"scene_count": 1})
     assert any("may render on-screen text" in a for a in advisory)
-
-
-def test_require_motion_without_any_motion_is_advisory():
-    story = _clean_story()
-    _, advisory = validate_story(story, {"scene_count": 1, "require_motion": True})
-    assert "Video Mode set but no scene is marked for motion" in advisory
-
-
-def test_require_motion_satisfied_when_a_scene_has_motion():
-    story = _clean_story()
-    story["scenes"][0]["motion"] = True
-    _, advisory = validate_story(story, {"scene_count": 1, "require_motion": True})
-    assert all("motion" not in a for a in advisory)

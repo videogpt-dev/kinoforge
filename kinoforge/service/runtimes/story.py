@@ -101,8 +101,8 @@ class StoryRuntime:
     def _writer_context(ports: StoryPorts, request: StoryWriteRequest) -> dict[str, Any]:
         fields = request.context.model_dump()
         ctx = Screenwriter(ports).build_context(StoryBrief.from_mapping(fields))
-        # Caller-set flags the writer reads (e.g. require_motion for the Video-Mode quality
-        # check) ride through the request's open context.
+        # Caller-set flags the writer reads (e.g. require_motion, so Video Mode always gets
+        # clips) ride through the request's open context.
         if "require_motion" in fields:
             ctx["require_motion"] = bool(fields["require_motion"])
         return ctx

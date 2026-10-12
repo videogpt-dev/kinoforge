@@ -122,3 +122,18 @@ def test_stage_route_override_reaches_usage():
     result, _ = _run([{**_JSON_STAGE, "model": "big"}], [json.dumps(_STORY)],
                      route=ModelRef("op", "small"))
     assert result["usage"]["models"] == ["big"]
+
+
+def test_video_mode_animates_every_scene_when_the_writer_marks_none():
+    story = {**_STORY, "scenes": [{"prompt": "a vault", "narration": "they wait", "motion": False}]}
+    result, _ = _run([_JSON_STAGE], [json.dumps(story)], ctx={**_CTX, "require_motion": True})
+    assert result["story"]["scenes"][0]["motion"] is True
+
+
+def test_video_mode_keeps_the_writers_motion_picks():
+    scenes = [{"prompt": "a vault", "narration": "they wait", "motion": True},
+              {"prompt": "a door", "narration": "it opens", "motion": False}]
+    story = {**_STORY, "scenes": scenes}
+    ctx = {**_CTX, "scene_count": 2, "require_motion": True}
+    result, _ = _run([_JSON_STAGE], [json.dumps(story)], ctx=ctx)
+    assert [s["motion"] for s in result["story"]["scenes"]] == [True, False]
