@@ -17,6 +17,10 @@ class InfrelayError(RuntimeError):
 class InfrelayClient:
     """Client for the Infrelay /v1/generate contract (cloud Infrelay or Infrelay-lite)."""
 
+    # One connection pool for every call, so a story's many calls reuse warm connections
+    # instead of paying a TCP and TLS handshake each.
+    _http = httpx.Client(limits=httpx.Limits(max_connections=64, max_keepalive_connections=16))
+
     def __init__(self, url: str, token: str = "", tenant: str = "") -> None:
         self._url = url.rstrip("/")
         self._token = token
@@ -28,8 +32,6 @@ class InfrelayClient:
         self, kind: str, ref: ModelRef, payload: Dict[str, Any], *, timeout: float
     ) -> Dict[str, Any]:
         log = active()
-        log.debug(f"infrelay -> {kind} {ref}", kind=kind, route=str(ref),
-                  tenant=self._tenant or None, timeout=timeout, payload=shape(payload, max_depth=2))
         if not self._url:
             raise InfrelayError("INFRELAY_URL is required")
         body: Dict[str, Any] = {
@@ -40,11 +42,12 @@ class InfrelayClient:
         headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
         url = f"{self._url}/v1/generate"
         log.debug(f"infrelay -> {kind} {ref}", kind=kind, route=str(ref),
-                  tenant=self._tenant or None, url=url, timeout=timeout)
+                  tenant=self._tenant or None, url=url, timeout=timeout,
+                  payload=shape(payload, max_depth=2))
         log.trace(f"infrelay {kind} input", **shape(payload, max_depth=1))
         started = time.monotonic()
         try:
-            response = httpx.post(url, headers=headers, json=body, timeout=timeout)
+            response = self._http.post(url, headers=headers, json=body, timeout=timeout)
         except httpx.HTTPError as exc:
             log.warning(f"infrelay {kind} {ref} unreachable: {exc}")
             raise InfrelayError(f"infrelay {kind}/{ref.provider} unreachable: {exc}") from exc
@@ -139,8 +142,8 @@ class InfrelayClient:
             raise InfrelayError("INFRELAY_URL is required")
         headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
         try:
-            response = httpx.request(method, f"{self._url}{path}", headers=headers, json=body,
-                                     timeout=60)
+            response = self._http.request(method, f"{self._url}{path}", headers=headers,
+                                          json=body, timeout=60)
         except httpx.HTTPError as exc:
             raise InfrelayError(f"infrelay jobs unreachable: {exc}") from exc
         if response.status_code >= 400:
@@ -208,7 +211,9 @@ class InfrelayClient:
             return base64.b64decode(output["value"])
         if kind == "url":
             try:
-                response = httpx.get(str(output["value"]), timeout=600, follow_redirects=True)
+                response = InfrelayClient._http.get(
+                    str(output["value"]), timeout=600, follow_redirects=True
+                )
                 response.raise_for_status()
             except httpx.HTTPError as exc:
                 raise InfrelayError(f"could not fetch generated media: {exc}") from exc

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from types import SimpleNamespace
 
 import pytest
 
@@ -299,7 +300,7 @@ def test_render_reports_each_prompt_rewrite_infrelay_ran(monkeypatch):
         output = {"type": "b64", "value": base64.b64encode(PNG).decode()}
         return httpx.Response(200, json={"output": output, "usage": usage})
 
-    monkeypatch.setattr(infrelay_module.httpx, "post", post)
+    monkeypatch.setattr(infrelay_module.InfrelayClient, "_http", SimpleNamespace(post=post))
     runtime = MediaRuntime(SETTINGS)
     options = {"aspect_ratio": "9:16", "seed": 7, "enhance": True}
     first = runtime.render_image(_image_request("scene", options=options))

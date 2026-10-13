@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,7 +43,7 @@ def _capture(monkeypatch, output):
         sent.append(json)
         return _Response(output)
 
-    monkeypatch.setattr(infrelay_module.httpx, "post", post)
+    monkeypatch.setattr(infrelay_module.InfrelayClient, "_http", SimpleNamespace(post=post))
     return sent
 
 
@@ -158,7 +159,9 @@ def test_a_clip_is_queued_with_a_callback_url_and_the_video_payload(monkeypatch)
         sent.append((method, url, json))
         return Queued()
 
-    monkeypatch.setattr(infrelay_module.httpx, "request", request)
+    monkeypatch.setattr(
+        infrelay_module.InfrelayClient, "_http", SimpleNamespace(request=request)
+    )
     spec = VideoSpec(seconds=10, resolution=720, aspect_ratio="9:16", dialogue="hi", music=False)
     client = InfrelayClient("http://gw", tenant="t")
 
