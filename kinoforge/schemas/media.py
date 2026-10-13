@@ -1,6 +1,7 @@
 """Media schemas: per-scene image/video/music/voice renders, prompt preview, and the
 shared-volume base-render / crop / format / align operations (with input validation)."""
 
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -154,6 +155,44 @@ class VideoRenderResponse(BaseModel):
         default_factory=list, description=REWRITES_DESCRIPTION
     )
     logs: List[LogEntryResponse] = Field(default_factory=list)
+
+
+class ClipJobRequest(VideoRenderRequest):
+    callback_url: str = Field(
+        min_length=1, max_length=2048,
+        description="Where the gateway posts the job once it ends.",
+    )
+
+
+class ClipJobStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+class ClipJobSubmitted(BaseModel):
+    job_id: str = Field(description="The gateway job; read it with GET .../video/jobs/{job_id}.")
+    logs: List[LogEntryResponse] = Field(default_factory=list)
+
+
+class ClipJobResponse(BaseModel):
+    job_id: str
+    status: ClipJobStatus
+    queue_position: Optional[int] = Field(
+        default=None, description="1 when it is next on its provider; only while queued."
+    )
+    video_b64: str = Field(default="", description="The clip (mp4), base64, once done.")
+    error: str = Field(default="", description="Why it failed, when it did.")
+    observed_limit: int = Field(
+        default=0,
+        description="A smaller prompt ceiling the provider declared in its error; resubmit "
+        "with it as prompt_limit.",
+    )
+    enhance: List[PromptRewriteUsage] = Field(
+        default_factory=list, description=REWRITES_DESCRIPTION
+    )
 
 
 class MusicRenderRequest(LoggableRequest):

@@ -100,6 +100,56 @@ class InfrelayClient:
     def video(self, ref: ModelRef, prompt: str, spec: VideoSpec) -> bytes:
         """Video (mp4) bytes. A native-audio model voices `dialogue` itself; `music` toggles a
         non-diegetic score. Providers without their own audio ignore both."""
+        payload = self._video_payload(ref, prompt, spec)
+        return self._bytes(self._generate("video", ref, payload, timeout=1800))
+
+    def submit_video(
+        self, ref: ModelRef, prompt: str, spec: VideoSpec, callback_url: str
+    ) -> str:
+        """Queues a clip on infrelay and returns its job id at once. Infrelay posts the job to
+        `callback_url` when it ends; read it with job and job_media."""
+        body: Dict[str, Any] = {
+            "kind": "video", "provider": ref.provider, "model": ref.model,
+            "input": self._video_payload(ref, prompt, spec), "callback_url": callback_url,
+        }
+        if self._tenant:
+            body["tenant_id"] = self._tenant
+        job = self._jobs("POST", "/v1/generate", body=body)
+        active().debug(f"infrelay queued video {ref}", job=job.get("id"), status=job.get("status"))
+        return str(job["id"])
+
+    def job(self, job_id: str) -> Dict[str, Any]:
+        return self._jobs("GET", f"/v1/jobs/{job_id}")
+
+    def cancel_job(self, job_id: str) -> Dict[str, Any]:
+        return self._jobs("DELETE", f"/v1/jobs/{job_id}")
+
+    def job_media(self, job: Dict[str, Any]) -> bytes:
+        """A finished job's media bytes; its prompt rewrite is kept for the caller to bill."""
+        result = job.get("result") or {}
+        rewrite = (result.get("usage") or {}).get("enhance")
+        if isinstance(rewrite, dict):
+            self.rewrites.append(dict(rewrite))
+        return self._bytes(result)
+
+    def _jobs(
+        self, method: str, path: str, *, body: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
+        if not self._url:
+            raise InfrelayError("INFRELAY_URL is required")
+        headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
+        try:
+            response = httpx.request(method, f"{self._url}{path}", headers=headers, json=body,
+                                     timeout=60)
+        except httpx.HTTPError as exc:
+            raise InfrelayError(f"infrelay jobs unreachable: {exc}") from exc
+        if response.status_code >= 400:
+            raise InfrelayError(
+                f"infrelay job {method} failed ({response.status_code}): {response.text[:300]}"
+            )
+        return response.json()
+
+    def _video_payload(self, ref: ModelRef, prompt: str, spec: VideoSpec) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "prompt": prompt, "seconds": spec.seconds, "resolution": spec.resolution,
             "aspect_ratio": spec.aspect_ratio, "safe": not spec.mature,
@@ -113,7 +163,7 @@ class InfrelayClient:
             payload["dialogue"] = spec.dialogue
         if not spec.music:
             payload["music"] = False
-        return self._bytes(self._generate("video", ref, payload, timeout=1800))
+        return payload
 
     def music(self, ref: ModelRef, prompt: str, *, seconds: int = 30) -> bytes:
         payload: Dict[str, Any] = {"prompt": prompt, "seconds": seconds}

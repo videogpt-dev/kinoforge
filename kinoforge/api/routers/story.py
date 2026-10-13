@@ -5,6 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from kinoforge.schemas import (
+    ClipJobRequest,
+    ClipJobResponse,
+    ClipJobSubmitted,
     ImageRenderRequest,
     ImageRenderResponse,
     MusicRenderRequest,
@@ -80,6 +83,42 @@ def render_image(request: ImageRenderRequest) -> dict:
 )
 def render_clip(request: VideoRenderRequest) -> dict:
     return MediaRuntime.from_env().render_clip(request)
+
+
+@router.post(
+    "/v1/segments/story/media/video/jobs",
+    summary="Queue one scene clip",
+    description=(
+        "Builds the clip prompt like the render above, queues it on the gateway and answers at "
+        "once with a job id; nothing waits on the GPU. The gateway posts the job to "
+        "`callback_url` when it ends; read it with GET .../video/jobs/{job_id}."
+    ),
+    response_model=ClipJobSubmitted,
+)
+def submit_clip(request: ClipJobRequest) -> dict:
+    return MediaRuntime.from_env().submit_clip(request)
+
+
+@router.get(
+    "/v1/segments/story/media/video/jobs/{job_id}",
+    summary="Read a queued scene clip",
+    description=(
+        "Its state, queue position while queued, the clip bytes once done, or the error with "
+        "any smaller prompt ceiling the provider declared."
+    ),
+    response_model=ClipJobResponse,
+)
+def read_clip_job(job_id: str, owner: str = "") -> dict:
+    return MediaRuntime.from_env().clip_job(owner, job_id)
+
+
+@router.delete(
+    "/v1/segments/story/media/video/jobs/{job_id}",
+    summary="Cancel a queued scene clip",
+    response_model=ClipJobResponse,
+)
+def cancel_clip_job(job_id: str, owner: str = "") -> dict:
+    return MediaRuntime.from_env().cancel_clip_job(owner, job_id)
 
 
 @router.post(

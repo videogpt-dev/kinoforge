@@ -15,13 +15,14 @@ from kinoforge.definitions import DefinitionBundle
 from kinoforge.definitions.models import DefinitionKind
 from kinoforge.observ import KinoLogger, build_logger, logged
 from kinoforge.schemas import (
+    ClipJobRequest,
     ImageRenderRequest,
     MusicRenderRequest,
     StoryPromptPreviewRequest,
     VideoRenderRequest,
     VoiceRenderRequest,
 )
-from kinoforge.segments.story.media.ceiling import PromptCeiling
+from kinoforge.segments.story.media.ceiling import PromptCeiling, limit_from_error
 from kinoforge.segments.story.media.images import ImagePainter
 from kinoforge.segments.story.media.music import MusicComposer
 from kinoforge.segments.story.media.videos import ClipMaker
@@ -150,6 +151,50 @@ class MediaRuntime:
             "enhance": infrelay.rewrites,
             "logs": logger.entries,
         }
+
+    @logged
+    def submit_clip(self, request: ClipJobRequest) -> dict[str, object]:
+        """Queues the scene clip on the gateway and returns its job id at once; the caller
+        reads it with clip_job. The prompt is built at the configured ceiling; a smaller one
+        the provider declares comes back on the job, for the caller to resubmit with."""
+        logger = self._logger(request, "video")
+        infrelay = self._settings.infrelay(request.owner)
+        maker = ClipMaker(generate_video=infrelay.video, ceiling=PromptCeiling())
+        story, scene, rec = dict(request.story), dict(request.scene), dict(request.rec)
+        opts = request.options
+        spec = VideoSpec(
+            seconds=opts.seconds, resolution=opts.resolution, aspect_ratio=opts.aspect_ratio,
+            mature=opts.mature, image=MediaUtils.decode(request.image_b64), enhance=opts.enhance,
+            enhance_style=opts.enhance_style,
+        )
+        motion = self._motion(self._presets(request), maker, scene, story, rec)
+        prompt, spec = maker.clip_call(scene, story, motion, spec, request.prompt_limit)
+        job_id = infrelay.submit_video(
+            ModelRef.from_mapping(request.pick), prompt, spec, request.callback_url
+        )
+        logger.info("video job queued", job=job_id)
+        return {"job_id": job_id, "logs": logger.entries}
+
+    def clip_job(self, owner: str, job_id: str) -> dict[str, object]:
+        """A queued clip now, with its bytes once it is done."""
+        infrelay = self._settings.infrelay(owner)
+        job = infrelay.job(job_id)
+        out: dict[str, object] = {
+            "job_id": job_id,
+            "status": job.get("status"),
+            "queue_position": job.get("queue_position"),
+        }
+        if job.get("status") == "done":
+            out["video_b64"] = base64.b64encode(infrelay.job_media(job)).decode()
+            out["enhance"] = infrelay.rewrites
+        elif job.get("error"):
+            out["error"] = str(job["error"])
+            out["observed_limit"] = limit_from_error(RuntimeError(job["error"]))
+        return out
+
+    def cancel_clip_job(self, owner: str, job_id: str) -> dict[str, object]:
+        job = self._settings.infrelay(owner).cancel_job(job_id)
+        return {"job_id": job_id, "status": job.get("status"), "error": job.get("error") or ""}
 
     @logged
     def render_music(self, request: MusicRenderRequest) -> dict[str, object]:

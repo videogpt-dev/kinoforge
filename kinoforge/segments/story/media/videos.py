@@ -107,14 +107,17 @@ class ClipMaker:
     def generate_clip(
         self, scene: dict, story: dict, motion: str, ref: ModelRef, spec: VideoSpec
     ) -> bytes:
-        """A native-audio scene voices its own dialogue: the spoken words go to the provider as
-        structured `dialogue`, and music is turned off so speech stays clear."""
+        return self._ceiling.run(
+            lambda limit: self._generate_video(ref, *self.clip_call(scene, story, motion, spec, limit))
+        )
+
+    def clip_call(
+        self, scene: dict, story: dict, motion: str, spec: VideoSpec, limit: int
+    ) -> tuple[str, VideoSpec]:
+        """The prompt and spec one clip runs with. A native-audio scene voices its own
+        dialogue: the spoken words go to the provider as structured `dialogue`, and music is
+        turned off so speech stays clear."""
         dialogue = self._spoken_line(scene)
         if dialogue:
             spec = replace(spec, dialogue=dialogue, music=False)
-        shot = scene.get("shot") or {}
-        return self._ceiling.run(
-            lambda limit: self._generate_video(
-                ref, self.video_prompt(scene, shot, story, motion, limit), spec
-            )
-        )
+        return self.video_prompt(scene, scene.get("shot") or {}, story, motion, limit), spec

@@ -35,6 +35,10 @@ from kinoforge.schemas.discovery import (
 from kinoforge.schemas.media import (
     AlignRequest,
     BaseRenderRequest,
+    ClipJobRequest,
+    ClipJobResponse,
+    ClipJobStatus,
+    ClipJobSubmitted,
     CropRequest,
     FormatRequest,
     ImageOptionsRequest,
@@ -86,7 +90,8 @@ __all__ = [
     # media
     "ImagePresetKeysRequest", "ImageOptionsRequest", "ImageRenderRequest",
     "ImageRenderResponse", "VideoOptionsRequest", "VideoRenderRequest",
-    "VideoRenderResponse", "MusicRenderRequest", "MusicRenderResponse",
+    "VideoRenderResponse", "ClipJobRequest", "ClipJobResponse", "ClipJobStatus", "ClipJobSubmitted",
+    "MusicRenderRequest", "MusicRenderResponse",
     "VoiceOptionsRequest", "VoiceRenderRequest", "VoiceRenderResponse",
     "StoryPromptPreviewRequest", "StoryPromptPreviewResponse", "CropRequest",
     "BaseRenderRequest", "FormatRequest", "AlignRequest",

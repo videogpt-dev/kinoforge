@@ -9,6 +9,7 @@ import pytest
 pytest.importorskip("httpx")
 
 from kinoforge.schemas import (  # noqa: E402
+    ClipJobRequest,
     ImageRenderRequest,
     MusicRenderRequest,
     StoryPromptPreviewRequest,
@@ -183,6 +184,55 @@ def test_video_prompt_compacts_to_the_ceiling_and_keeps_the_shot(monkeypatch):
     assert len(prompts[0]) <= 400
     assert "lamp sweeps" in prompts[0]
     assert "Bruno" not in prompts[0]
+
+
+def test_a_queued_clip_is_submitted_with_its_prompt_and_read_back_when_done(monkeypatch):
+    seen = {}
+
+    def submit_video(self, ref, prompt, spec, callback_url):
+        seen.update(ref=ref, prompt=prompt, spec=spec, callback=callback_url)
+        return "job-9"
+
+    fake(monkeypatch, "submit_video", submit_video)
+    fake(
+        monkeypatch,
+        "job",
+        lambda self, job_id: {
+            "id": job_id,
+            "status": "done",
+            "result": {
+                "output": {"type": "b64", "value": base64.b64encode(MP4).decode()},
+                "usage": {"enhance": {"provider": "openrouter", "model": "m", "credits": 1}},
+            },
+        },
+    )
+    runtime = MediaRuntime(SETTINGS)
+
+    request = ClipJobRequest(
+        **_video_request().model_dump(), callback_url="https://core/internal/clip-jobs"
+    )
+    queued = runtime.submit_clip(request)
+    done = runtime.clip_job("tenant-1", queued["job_id"])
+
+    assert queued["job_id"] == "job-9"
+    assert seen["callback"] == "https://core/internal/clip-jobs"
+    assert "lamp sweeps" in seen["prompt"] and seen["spec"].seconds == 5
+    assert (done["status"], base64.b64decode(done["video_b64"])) == ("done", MP4)
+    assert done["enhance"] == [{"provider": "openrouter", "model": "m", "credits": 1}]
+
+
+def test_a_failed_clip_job_reports_the_prompt_ceiling_the_provider_declared(monkeypatch):
+    error = "input.prompt: String length must be less than or equal to 2000"
+    fake(
+        monkeypatch,
+        "job",
+        lambda self, job_id: {"id": job_id, "status": "error", "error": error},
+    )
+
+    failed = MediaRuntime(SETTINGS).clip_job("tenant-1", "job-9")
+
+    assert (failed["status"], failed["observed_limit"]) == ("error", 2000)
+    assert "video_b64" not in failed
 
 
 # --- music and voice ------------------------------------------------------

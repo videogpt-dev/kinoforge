@@ -142,3 +142,32 @@ def test_catalog_lists_three_segments_with_paths_and_planned_assembly():
     story = {f.code_name: f.status for f in segments[JobKind.STORY].features}
     assert story["video-assembly"] is SegmentStatus.PLANNED
     assert story["story-writing"] is SegmentStatus.AVAILABLE
+
+
+def test_a_clip_is_queued_with_a_callback_url_and_the_video_payload(monkeypatch):
+    sent = []
+
+    class Queued:
+        status_code = 202
+
+        @staticmethod
+        def json():
+            return {"id": "job-1", "status": "queued"}
+
+    def request(method, url, headers, json, timeout):
+        sent.append((method, url, json))
+        return Queued()
+
+    monkeypatch.setattr(infrelay_module.httpx, "request", request)
+    spec = VideoSpec(seconds=10, resolution=720, aspect_ratio="9:16", dialogue="hi", music=False)
+    client = InfrelayClient("http://gw", tenant="t")
+
+    job_id = client.submit_video(ModelRef("beam", "h3"), "a kite", spec, "https://core/hook")
+    client.job(job_id)
+
+    (method, url, body), (get, job_url, _) = sent
+    assert (method, url, job_id) == ("POST", "http://gw/v1/generate", "job-1")
+    assert (body["kind"], body["provider"], body["tenant_id"]) == ("video", "beam", "t")
+    assert body["callback_url"] == "https://core/hook"
+    assert body["input"]["dialogue"] == "hi" and body["input"]["music"] is False
+    assert (get, job_url) == ("GET", "http://gw/v1/jobs/job-1")
