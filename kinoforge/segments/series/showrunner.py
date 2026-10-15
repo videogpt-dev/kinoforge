@@ -1,7 +1,7 @@
 import json
 from typing import Dict, Optional
 
-from kinoforge.contract import MeterAction, ModelRef
+from kinoforge.contract import AITask, MeterAction, ModelRef
 from kinoforge.segments.story.formats import prompt_label
 from kinoforge.segments.story.ports import StoryPorts
 
@@ -33,7 +33,7 @@ class Showrunner:
         )
         try:
             data = self.ports.complete_json(
-                "ideas",
+                AITask.STORY_IDEAS,
                 self.ports.prompt("story_system"),
                 prompt,
                 route=route or ModelRef(),

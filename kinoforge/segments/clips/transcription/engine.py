@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from kinoforge.contract import Meter, MeterAction, ModelRef
+from kinoforge.contract import AITask, ModelRef
 from kinoforge.observ import active
 from kinoforge.segments.clips.render.ffmpeg import Ffmpeg, FfmpegError
 from kinoforge.segments.clips.transcription.cache import TranscriptCache
@@ -18,8 +18,9 @@ class TranscriptionError(RuntimeError):
 
 
 class Transcriber:
-    """Transcribes media through the injected gateway port (`transcribe_bytes`), using the
-    resolved Whisper settings; caches transcripts and meters the minutes actually processed."""
+    """Transcribes media through the injected gateway port (`transcribe_bytes(task, audio, ref,
+    ...)`), using the resolved Whisper settings, and caches transcripts. Infrelay prices the
+    minutes it transcribed."""
 
     def __init__(
         self,
@@ -27,12 +28,10 @@ class Transcriber:
         transcription: Dict[str, Any],
         cache_dir: Path,
         transcribe_bytes: TranscribeBytes,
-        meter: Optional[Meter] = None,
     ) -> None:
         self._settings = dict(transcription)
         self._cache_dir = Path(cache_dir)
         self._transcribe_bytes = transcribe_bytes
-        self._meter = meter
 
     @staticmethod
     def extract_audio(video_path: Path) -> Path:
@@ -69,18 +68,17 @@ class Transcriber:
             active().info(f"  Using cached transcript: {cache_path.name} ({len(cached)} segments)")
             return cached
         segments = self._transcribe(video_path, model, language)
-        if segments:
-            if cache.save(cache_path, segments):
-                active().info(f"  Saved transcript: {cache_path}")
-            self._bill(segments, model)
+        if segments and cache.save(cache_path, segments):
+            active().info(f"  Saved transcript: {cache_path}")
         return segments
 
     def transcribe_words(self, audio_path: Path, language: Optional[str] = None) -> List[Dict]:
-        """Segments with word timings for captions: [{start, end, text, words}]; empty when the
-        gateway cannot do it."""
+        """Narration segments with word timings for captions: [{start, end, text, words}];
+        empty when the gateway cannot do it."""
         try:
             segments, _meta = self._transcribe_bytes(
-                audio_path.read_bytes(), ModelRef("whisper", self._settings["model"]),
+                AITask.STORY_CAPTIONS, audio_path.read_bytes(),
+                ModelRef("whisper", self._settings["model"]),
                 language=language or self._settings.get("language") or "",
                 word_timestamps=True, params=self._tuning(),
             )
@@ -94,7 +92,8 @@ class Transcriber:
         audio_path = self.extract_audio(video_path)
         try:
             segments, meta = self._transcribe_bytes(
-                audio_path.read_bytes(), ModelRef("whisper", model or "turbo"),
+                AITask.VIRAL_CLIP_TRANSCRIBE, audio_path.read_bytes(),
+                ModelRef("whisper", model or "turbo"),
                 language=language or "", params=self._tuning(),
             )
         finally:
@@ -104,8 +103,3 @@ class Transcriber:
         active().success(f"  Transcribed {len(segments)} segments"
                          + (f" | detected language: {detected}" if detected else ""))
         return segments
-
-    def _bill(self, segments: List[Dict], model: str) -> None:
-        if self._meter:
-            minutes = max(float(s.get("end") or 0.0) for s in segments) / 60.0
-            self._meter(MeterAction.TRANSCRIBE_MINUTE, minutes, variant=model.strip())

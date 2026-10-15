@@ -2,7 +2,7 @@ import json
 import re
 from enum import Enum
 
-from kinoforge.contract import ModelRef
+from kinoforge.contract import AITask, ModelRef
 from kinoforge.segments.story.agent import clean_text, strip_dashes
 from kinoforge.segments.story.formats import normalize
 from kinoforge.segments.story.languages import LANGUAGES, language_name
@@ -30,11 +30,11 @@ class StoryOperations:
         self.ports = ports
 
     def _ask_json(
-        self, purpose: str, system: str, prompt: str, route: ModelRef | None,
+        self, task: AITask, system: str, prompt: str, route: ModelRef | None,
         temperature: float, max_tokens: int,
     ) -> dict:
         return self.ports.complete_json(
-            purpose, system, prompt, route=route or ModelRef(),
+            task, system, prompt, route=route or ModelRef(),
             temperature=temperature, max_tokens=max_tokens,
         )
 
@@ -82,7 +82,7 @@ class StoryOperations:
         if instructions.strip():
             prompt = f"{prompt}\n\nExtra direction for this rewrite:\n{instructions.strip()}"
         try:
-            data = self._ask_json("story", self._agent_voice(agent), prompt, route, 0.9, max_tokens)
+            data = self._ask_json(AITask.STORY_WRITE, self._agent_voice(agent), prompt, route, 0.9, max_tokens)
         except Exception as error:
             return {"ok": False, "error": str(error)}
         return {
@@ -111,7 +111,7 @@ class StoryOperations:
             scenes_text=scenes_text,
         )
         try:
-            data = self._ask_json("story", self._agent_voice(agent), prompt, route, 0.8, max_tokens)
+            data = self._ask_json(AITask.STORY_WRITE, self._agent_voice(agent), prompt, route, 0.8, max_tokens)
         except Exception as error:
             return {"ok": False, "error": str(error)}
         characters = [
@@ -148,7 +148,8 @@ class StoryOperations:
         )
         try:
             data = self._ask_json(
-                "translate", self.ports.prompt("story_system"), prompt, route, 0.3, max_tokens
+                AITask.STORY_TRANSLATE, self.ports.prompt("story_system"), prompt, route, 0.3,
+                max_tokens,
             )
         except Exception as error:
             return {"ok": False, "error": str(error)}
@@ -208,7 +209,8 @@ class StoryOperations:
         )
         try:
             data = self._ask_json(
-                "director", self.ports.prompt("story_system"), prompt, route, 0.7, max_tokens
+                AITask.STORY_DIRECT, self.ports.prompt("story_system"), prompt, route, 0.7,
+                max_tokens,
             )
         except Exception as error:
             return {"ok": False, "error": str(error)}
@@ -255,7 +257,8 @@ class StoryOperations:
         self, kind: str, system: str, user: str, route: ModelRef, max_tokens: int
     ) -> str:
         text, _ = self.ports.complete(
-            "suggest", system, user, route=route, temperature=0.8, max_tokens=max_tokens
+            AITask.STORY_SUGGEST, system, user, route=route, temperature=0.8,
+            max_tokens=max_tokens,
         )
         return self._clean_suggestion(text, kind == Suggestion.TITLE.kind)
 
@@ -266,7 +269,6 @@ class StoryOperations:
         description: str = "",
         idea: str = "",
         route: ModelRef | None = None,
-        fallback_model: str = "",
     ) -> dict:
         suggestion = Suggestion.of(kind)
         if suggestion is None:
@@ -277,20 +279,10 @@ class StoryOperations:
             {"title": title.strip(), "description": description.strip(), "idea": idea.strip()},
             ensure_ascii=False,
         )
-        route = route or ModelRef()
         try:
-            cleaned = self._suggest_once(kind, system, user, route, max_tokens)
+            cleaned = self._suggest_once(kind, system, user, route or ModelRef(), max_tokens)
         except Exception as error:
-            if not fallback_model:
-                return {"ok": False, "error": str(error)}
-            cleaned = ""
-        if fallback_model and not self._plausible_suggestion(cleaned, kind):
-            try:
-                cleaned = self._suggest_once(
-                    kind, system, user, route.with_overrides(model=fallback_model), max_tokens
-                )
-            except Exception as error:
-                return {"ok": False, "error": str(error)}
+            return {"ok": False, "error": str(error)}
         if not self._plausible_suggestion(cleaned, kind):
             return {"ok": False, "error": "model returned unusable suggestion"}
         return {"ok": True, "text": cleaned}

@@ -67,17 +67,17 @@ def test_run_agent_stage_overrides_the_project_route():
     agent = RunAgent(text.ports(), {"stages": []}, {"scene_count": 3},
                      route=ModelRef("op", "base"))
     assert agent._run_stage({"model": "stage-model"}, "writer", "idea") is None
-    assert text.calls == [("story", ModelRef("op", "stage-model"))]
+    assert text.calls == [("story.write", ModelRef("op", "stage-model"))]
     assert agent.models_used == ["stage-model"]
 
 
-def test_suggest_field_falls_back_to_the_fallback_model_on_the_same_provider():
-    text = _Text(["no", "A Great Title"])
+def test_an_unusable_suggestion_is_refused():
+    text = _Text(["no"])
     result = StoryOperations(text.ports()).suggest_field(
-        "title", idea="x", route=ModelRef("op", "m"), fallback_model="fb"
+        "title", idea="x", route=ModelRef("op", "m")
     )
-    assert result == {"ok": True, "text": "A Great Title"}
-    assert [route for _, route in text.calls] == [ModelRef("op", "m"), ModelRef("op", "fb")]
+    assert result == {"ok": False, "error": "model returned unusable suggestion"}
+    assert [route for _, route in text.calls] == [ModelRef("op", "m")]
 
 
 def test_suggest_field_rejects_unknown_kind():

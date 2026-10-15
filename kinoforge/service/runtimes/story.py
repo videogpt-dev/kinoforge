@@ -14,6 +14,7 @@ from typing import Any, assert_never
 
 from kinoforge.contract import ModelRef
 from kinoforge.definitions import DefinitionBundle, DefinitionRenderer
+from kinoforge.inference.charges import InferenceCharges
 from kinoforge.observ import KinoLogger, bind, build_logger, logged, reset
 from kinoforge.schemas import StoryOperation, StoryOperationRequest, StoryWriteRequest
 from kinoforge.segments.story.agent import Screenwriter, StoryBrief
@@ -71,6 +72,7 @@ class StoryRuntime:
             ports=ports, logger=logger, meter=meter, route=ModelRef.from_mapping(request.pick)
         )
 
+    @InferenceCharges.reported
     @logged
     def write(
         self,
@@ -107,6 +109,7 @@ class StoryRuntime:
             ctx["require_motion"] = bool(fields["require_motion"])
         return ctx
 
+    @InferenceCharges.reported
     @logged
     def operate(self, request: StoryOperationRequest) -> dict[str, Any]:
         session = self._session(request)
@@ -163,7 +166,6 @@ class StoryRuntime:
                     str(payload.get("description") or ""),
                     str(payload.get("idea") or ""),
                     route,
-                    str(request.config.get("fallback_model") or ""),
                 )
             case unreachable:
                 assert_never(unreachable)

@@ -5,6 +5,30 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+PICK_DESCRIPTION = (
+    "The inference pick {model, provider, fallback}. A blank or `auto` model runs the task's "
+    "route on the gateway, moving on when a step fails; a blank provider is any that serves "
+    "the model. `fallback` lists picks tried after it."
+)
+
+
+class InferenceChargeResponse(BaseModel):
+    """One inference call Infrelay answered for the request, with its price."""
+
+    task: str = Field(description="The AI task it ran as.")
+    kind: str = ""
+    provider: str = Field(default="", description="Who served it (videogpt for a hidden pick).")
+    model: str = ""
+    credits: int = Field(default=0, ge=0, description="Infrelay's price: inference and hardware.")
+    byok: bool = Field(default=False, description="Ran on the caller's own key.")
+    units: int = Field(default=1, ge=1, description="Priced units: started minutes for audio.")
+
+
+CHARGES_DESCRIPTION = (
+    "Every inference call Infrelay answered for this request, each with its price, for the "
+    "caller to bill."
+)
+
 
 class LoggableRequest(BaseModel):
     """Adds an optional per-request console log level (trace|debug|info|success|warning|error)."""
@@ -128,4 +152,7 @@ class AlignmentResponse(BaseModel):
     aligned: List[Dict[str, Any]] = Field(
         default_factory=list,
         description="Canonical text aligned to recognized word timing.",
+    )
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
     )

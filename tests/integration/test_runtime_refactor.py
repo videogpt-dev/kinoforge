@@ -9,11 +9,10 @@ import pytest
 
 pytest.importorskip("httpx")
 
-from kinoforge.contract import ImageSpec, JobKind, ModelRef, VideoSpec  # noqa: E402
+from kinoforge.contract import AITask, ImageSpec, JobKind, ModelRef, VideoSpec  # noqa: E402
 from kinoforge.definitions import DefinitionBundle  # noqa: E402
 from kinoforge.inference import InfrelayClient, InfrelayError  # noqa: E402
 from kinoforge.inference import infrelay as infrelay_module  # noqa: E402
-from kinoforge.observ import bind, build_logger, reset  # noqa: E402
 from kinoforge.schemas import SegmentStatus  # noqa: E402
 from kinoforge.segments.clips.moments.finders import (  # noqa: E402
     AiMomentFinder,
@@ -40,7 +39,7 @@ def _capture(monkeypatch, output):
     sent = []
 
     def post(url, headers, json, timeout):
-        sent.append(json)
+        sent.append({**json, "url": url})
         return _Response(output)
 
     monkeypatch.setattr(infrelay_module.InfrelayClient, "_http", SimpleNamespace(post=post))
@@ -53,13 +52,14 @@ def test_image_payload_comes_from_the_spec(monkeypatch):
     sent = _capture(monkeypatch, {"type": "b64", "value": base64.b64encode(b"png").decode()})
     spec = ImageSpec(aspect_ratio="1:1", seed=7, mature=True, negative="blur",
                      reference=b"ref", enhance=True, enhance_style="cine")
-    data = InfrelayClient("http://gw", tenant="t").image(ModelRef("fal", "flux"), "a cat", spec)
+    client = InfrelayClient("http://gw", tenant="t")
+    data = client.image(AITask.STORY_IMAGE, ModelRef("fal", "flux"), "a cat", spec)
     assert data == b"png"
     body = sent[0]
-    assert (body["kind"], body["provider"], body["model"], body["tenant_id"]) == (
-        "image", "fal", "flux", "t")
+    assert (body["url"], body["inference"], body["tenant_id"]) == (
+        "http://gw/v1/inference/story.image", {"model": "flux", "provider": "fal"}, "t")
     assert body["input"] == {
-        "prompt": "a cat", "aspect_ratio": "1:1", "safe": False, "model": "flux", "seed": 7,
+        "prompt": "a cat", "aspect_ratio": "1:1", "safe": False, "seed": 7,
         "negative": "blur", "reference_b64": base64.b64encode(b"ref").decode(),
         "enhance": True, "enhance_style": "cine",
     }
@@ -68,29 +68,43 @@ def test_image_payload_comes_from_the_spec(monkeypatch):
 def test_video_payload_carries_dialogue_and_music_off(monkeypatch):
     sent = _capture(monkeypatch, {"type": "b64", "value": base64.b64encode(b"mp4").decode()})
     spec = VideoSpec(seconds=5, resolution=720, aspect_ratio="9:16", dialogue="hi", music=False)
-    InfrelayClient("http://gw").video(ModelRef("fal"), "walk", spec)
+    InfrelayClient("http://gw").video(AITask.STORY_VIDEO, ModelRef("fal"), "walk", spec)
     payload = sent[0]["input"]
     assert (payload["dialogue"], payload["music"]) == ("hi", False)
-    assert "model" not in payload  # no model -> provider default
+    assert sent[0]["inference"] == {"model": "auto", "provider": "fal"}  # the provider's route
+
+
+def test_a_pick_with_fallbacks_reaches_the_gateway_as_is(monkeypatch):
+    sent = _capture(monkeypatch, {"type": "text", "value": "ok"})
+    ref = ModelRef.from_mapping(
+        {"model": "gpt-x", "fallback": [{"model": "auto"}, {"provider": "op", "model": "m"}]}
+    )
+    InfrelayClient("http://gw").complete(AITask.TEXT, ref, "p", max_tokens=5, temperature=0)
+    assert sent[0]["inference"] == {
+        "model": "gpt-x",
+        "provider": "auto",
+        "fallback": [{"model": "auto", "provider": "auto"}, {"model": "m", "provider": "op"}],
+    }
 
 
 def test_complete_is_text_without_the_usage(monkeypatch):
     _capture(monkeypatch, {"type": "text", "value": "hello", "meta": {"model": "m"}})
     client = InfrelayClient("http://gw")
     ref = ModelRef("op", "m")
-    assert client.complete(ref, "p", max_tokens=5, temperature=0.1) == "hello"
-    assert client.text(ref, "", "p", temperature=0.1, max_tokens=5) == ("hello", {"model": "m"})
+    assert client.complete(AITask.TEXT, ref, "p", max_tokens=5, temperature=0.1) == "hello"
+    assert client.text(AITask.TEXT, ref, "", "p", temperature=0.1, max_tokens=5) == (
+        "hello", {"model": "m"})
 
 
 def test_missing_url_fails_loudly():
     with pytest.raises(InfrelayError, match="INFRELAY_URL is required"):
-        InfrelayClient("").complete(ModelRef("op"), "p", max_tokens=1, temperature=0)
+        InfrelayClient("").complete(AITask.TEXT, ModelRef("op"), "p", max_tokens=1, temperature=0)
 
 
 # --- GatewayTranscriber ---------------------------------------------------
 
 class _FailingClient:
-    def transcribe(self, audio, ref, **kwargs):
+    def transcribe(self, task, audio, ref, **kwargs):
         raise InfrelayError("gateway down")
 
 
@@ -98,7 +112,7 @@ def test_gateway_failure_surfaces_as_transcription_error():
     with pytest.raises(TranscriptionError, match="gateway down"):
         transcriber = GatewayTranscriber(ServiceSettings(), "", {"model": "base"})
         transcriber._infrelay = _FailingClient()
-        transcriber._gateway(b"audio", ModelRef("whisper", "base"))
+        transcriber._gateway(AITask.TRANSCRIBE, b"audio", ModelRef("whisper", "base"))
 
 
 # --- MomentFinders --------------------------------------------------------
@@ -123,15 +137,10 @@ def test_offline_finder_builds_the_offline_finder_even_with_a_route():
     assert isinstance(finder, OfflineMomentFinder)
 
 
-def test_ai_without_route_warns_loudly_and_falls_back():
-    logger = build_logger(segment="clips")
-    token = bind(logger)
-    try:
-        finder = _finder({**_CONFIG, "moment_finder": "ai"})
-    finally:
-        reset(token)
-    assert isinstance(finder, OfflineMomentFinder)
-    assert any(e["level"] == "warning" and "no moment_route" in e["text"] for e in logger.entries)
+def test_ai_without_route_leaves_the_model_to_the_gateway():
+    finder = _finder({**_CONFIG, "moment_finder": "ai"})
+    assert isinstance(finder, AiMomentFinder)
+    assert finder.name == "auto/auto"
 
 
 # --- catalog ---------------------------------------------------------------
@@ -165,12 +174,84 @@ def test_a_clip_is_queued_with_a_callback_url_and_the_video_payload(monkeypatch)
     spec = VideoSpec(seconds=10, resolution=720, aspect_ratio="9:16", dialogue="hi", music=False)
     client = InfrelayClient("http://gw", tenant="t")
 
-    job_id = client.submit_video(ModelRef("beam", "h3"), "a kite", spec, "https://core/hook")
+    job_id = client.submit_video(
+        AITask.STORY_VIDEO, ModelRef("beam", "h3"), "a kite", spec, "https://core/hook"
+    )
     client.job(job_id)
 
     (method, url, body), (get, job_url, _) = sent
-    assert (method, url, job_id) == ("POST", "http://gw/v1/generate", "job-1")
-    assert (body["kind"], body["provider"], body["tenant_id"]) == ("video", "beam", "t")
+    assert (method, url, job_id) == ("POST", "http://gw/v1/inference/story.video", "job-1")
+    assert (body["inference"], body["tenant_id"]) == ({"model": "h3", "provider": "beam"}, "t")
     assert body["callback_url"] == "https://core/hook"
     assert body["input"]["dialogue"] == "hi" and body["input"]["music"] is False
     assert (get, job_url) == ("GET", "http://gw/v1/jobs/job-1")
+
+
+def test_a_call_that_runs_only_queued_is_queued_and_read_until_done(monkeypatch):
+    from kinoforge.inference.charges import InferenceCharges
+
+    calls = []
+    transcript = {"type": "transcript", "value": "hi", "meta": {"segments": [{"text": "hi"}]}}
+    replies = {
+        "POST": [SimpleNamespace(status_code=409, text="runs only as a queued job",
+                                 json=lambda: {})],
+        "QUEUE": [SimpleNamespace(status_code=202, json=lambda: {"id": "job-9"})],
+        "GET": [
+            SimpleNamespace(status_code=429, headers={"Retry-After": "0"}),
+            SimpleNamespace(status_code=200, headers={}, json=lambda: {"status": "running"}),
+            SimpleNamespace(status_code=200, headers={}, json=lambda: {
+                "status": "done", "task": "viralClip.transcribe",
+                "result": {"provider": "whisper", "model": "turbo", "kind": "transcribe",
+                           "output": transcript, "usage": {"credits": 24, "units": 3}},
+            }),
+        ],
+    }
+
+    def post(url, headers, json, timeout):
+        calls.append(("POST", url, json))
+        return replies["POST"].pop(0)
+
+    def request(method, url, headers, json, timeout):
+        calls.append((method, url, json))
+        return replies["QUEUE" if method == "POST" else "GET"].pop(0)
+
+    monkeypatch.setattr(infrelay_module.InfrelayClient, "_http",
+                        SimpleNamespace(post=post, request=request))
+    monkeypatch.setattr(infrelay_module.InfrelayClient, "POLL_FIRST", 0)
+    monkeypatch.setattr(infrelay_module.time, "sleep", lambda seconds: None)
+
+    with InferenceCharges.collect() as charges:
+        segments, _meta = InfrelayClient("http://gw").transcribe(
+            AITask.VIRAL_CLIP_TRANSCRIBE, b"audio", ModelRef("whisper", "turbo")
+        )
+
+    assert segments == [{"text": "hi"}]
+    assert calls[1][2]["queue"] is True
+    assert [c[0] for c in calls] == ["POST", "POST", "GET", "GET", "GET"]
+    assert charges == [{"task": "viralClip.transcribe", "kind": "transcribe", "provider": "whisper",
+                        "model": "turbo", "credits": 24, "byok": False, "units": 3}]
+
+
+def test_every_answered_call_is_reported_with_its_price(monkeypatch):
+    from kinoforge.inference.charges import InferenceCharges
+
+    def post(url, headers, json, timeout):
+        return SimpleNamespace(status_code=200, text="", json=lambda: {
+            "provider": "videogpt", "model": "story-auto", "kind": "text",
+            "output": {"type": "text", "value": "hello"}, "usage": {"credits": 2, "byok": False},
+        })
+
+    monkeypatch.setattr(infrelay_module.InfrelayClient, "_http", SimpleNamespace(post=post))
+
+    @InferenceCharges.reported
+    def run() -> dict:
+        client = InfrelayClient("http://gw")
+        client.complete(AITask.STORY_WRITE, ModelRef(), "p", max_tokens=5, temperature=0)
+        client.complete(AITask.STORY_IDEAS, ModelRef(), "q", max_tokens=5, temperature=0)
+        return {"ok": True}
+
+    out = run()
+
+    assert out["ok"] is True
+    assert [(c["task"], c["credits"]) for c in out["inference"]] == [
+        ("story.write", 2), ("story.ideas", 2)]

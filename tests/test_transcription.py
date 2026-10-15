@@ -1,8 +1,8 @@
-"""Transcriber (cache, metering, word timings), transcript cache, and caption alignment."""
+"""Transcriber (cache, word timings), transcript cache, and caption alignment."""
 
 from __future__ import annotations
 
-from kinoforge.contract import MeterAction, ModelRef
+from kinoforge.contract import ModelRef
 from kinoforge.segments.clips.transcription import Transcriber, TranscriptionError, WordAligner
 from kinoforge.segments.clips.transcription.cache import TranscriptCache
 
@@ -15,32 +15,31 @@ class _Gateway:
         self._result = result if result is not None else list(_SEGMENTS)
         self._error = error
 
-    def __call__(self, audio, ref, **kwargs):
+    def __call__(self, task, audio, ref, **kwargs):
         self.calls.append((ref, kwargs))
         if self._error:
             raise self._error
         return self._result, {"language": "en"}
 
 
-def _transcriber(tmp_path, gateway, meter=None):
+def _transcriber(tmp_path, gateway):
     return Transcriber(
         transcription={"model": "base", "device": "cpu", "beam_size": 5},
-        cache_dir=tmp_path / "cache", transcribe_bytes=gateway, meter=meter,
+        cache_dir=tmp_path / "cache", transcribe_bytes=gateway,
     )
 
 
-def test_transcribes_once_then_serves_cache_without_rebilling(tmp_path):
+def test_transcribes_once_then_serves_cache(tmp_path):
     audio = tmp_path / "a.mp3"
     audio.write_bytes(b"sound")
-    gateway, metered = _Gateway(), []
-    transcriber = _transcriber(tmp_path, gateway, lambda *a, **k: metered.append((a, k)))
+    gateway = _Gateway()
+    transcriber = _transcriber(tmp_path, gateway)
     assert transcriber.transcribe_video(audio) == _SEGMENTS
     assert transcriber.transcribe_video(audio) == _SEGMENTS
     assert len(gateway.calls) == 1
     ref, kwargs = gateway.calls[0]
     assert ref == ModelRef("whisper", "base")
     assert kwargs["params"]["beam_size"] == 5 and kwargs["params"]["device"] == "cpu"
-    assert metered == [((MeterAction.TRANSCRIBE_MINUTE, 1.5), {"variant": "base"})]
 
 
 def test_output_dir_cache_and_model_override(tmp_path):
@@ -52,13 +51,12 @@ def test_output_dir_cache_and_model_override(tmp_path):
     assert list((tmp_path / "out" / "transcripts").glob("*_small_hi.json"))
 
 
-def test_empty_result_is_not_cached_or_billed(tmp_path):
+def test_empty_result_is_not_cached(tmp_path):
     audio = tmp_path / "a.mp3"
     audio.write_bytes(b"sound")
-    metered = []
-    transcriber = _transcriber(tmp_path, _Gateway(result=[]), lambda *a, **k: metered.append(a))
+    transcriber = _transcriber(tmp_path, _Gateway(result=[]))
     assert transcriber.transcribe_video(audio) == []
-    assert metered == [] and not (tmp_path / "cache").exists()
+    assert not (tmp_path / "cache").exists()
 
 
 def test_word_timing_failure_returns_empty(tmp_path):

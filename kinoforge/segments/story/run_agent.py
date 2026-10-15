@@ -3,7 +3,7 @@
 import json
 from collections.abc import Callable
 
-from kinoforge.contract import MeterAction, ModelRef
+from kinoforge.contract import AITask, MeterAction, ModelRef
 from kinoforge.segments.story.agent import AudienceMode, clean_text
 from kinoforge.segments.story.ports import StoryPorts
 from kinoforge.segments.story.quality import StoryQualityGate
@@ -168,7 +168,7 @@ class RunAgent:
         for attempt in range(attempts):
             try:
                 text, usage = self.ports.complete(
-                    "story",
+                    AITask.STORY_WRITE,
                     # One persona per agent, applied to every stage; global default last.
                     self.agent.get("persona") or self.ports.prompt("story_system"),
                     prompt,

@@ -11,12 +11,13 @@ from typing import Any, Dict
 
 from kinoforge.contract import ModelRef
 from kinoforge.definitions import DefinitionBundle, DefinitionRenderer
+from kinoforge.inference.charges import InferenceCharges
 from kinoforge.observ import bind, build_logger, logged, reset
+from kinoforge.schemas import SeriesPlanRequest
 from kinoforge.segments.series.showrunner import Showrunner
 from kinoforge.service.meter import EventMeter
-from kinoforge.schemas import SeriesPlanRequest
-from kinoforge.service.settings import ServiceSettings
 from kinoforge.service.runtimes.text_ports import InfrelayTextPorts
+from kinoforge.service.settings import ServiceSettings
 
 
 class SeriesRuntime:
@@ -27,6 +28,7 @@ class SeriesRuntime:
     def from_env(cls) -> "SeriesRuntime":
         return cls(ServiceSettings.from_env())
 
+    @InferenceCharges.reported
     @logged
     def plan(self, request: SeriesPlanRequest) -> Dict[str, Any]:
         bundle = DefinitionBundle.from_mapping(

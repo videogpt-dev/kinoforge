@@ -1,8 +1,10 @@
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from kinoforge.contract import JobKind
+from kinoforge.contract import AITask, JobKind
 from kinoforge.definitions import DefinitionBundle
+from kinoforge.inference.charges import InferenceCharges
 from kinoforge.observ import KinoLogger, bind, build_logger, logged, reset
 from kinoforge.schemas import ClipsExecutionRequest
 from kinoforge.segments.clips.moments.finders import MomentFinders
@@ -27,6 +29,7 @@ class ClipsRuntime:
     def _path(value: Any) -> Optional[Path]:
         return Path(value) if value else None
 
+    @InferenceCharges.reported
     @logged
     def execute(
         self,
@@ -60,10 +63,12 @@ class ClipsRuntime:
         try:
             ClipsPipeline(
                 transcribe_video=GatewayTranscriber(
-                    self._settings, request.owner, request.config["transcription"], meter
+                    self._settings, request.owner, request.config["transcription"]
                 ).transcribe_video,
                 moment_finder=MomentFinders.pick(
-                    config, definitions, self._settings.infrelay(request.owner).complete
+                    config, definitions,
+                    partial(self._settings.infrelay(request.owner).complete,
+                            AITask.VIRAL_CLIP_FIND),
                 ),
             ).run(worker)
         finally:

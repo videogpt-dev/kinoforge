@@ -2,26 +2,80 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, Mapping, Optional, Protocol, Tuple, runtime_checkable
+
+
+class AITask(StrEnum):
+    """What an inference call is for; the gateway routes each task (Infrelay's AITask). The
+    kinds are the general-purpose tasks."""
+
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+    MUSIC = "music"
+    TRANSCRIBE = "transcribe"
+    VIRAL_CLIP_TRANSCRIBE = "viralClip.transcribe"
+    VIRAL_CLIP_FIND = "viralClip.find"
+    STORY_WRITE = "story.write"
+    STORY_IDEAS = "story.ideas"
+    STORY_SUGGEST = "story.suggest"
+    STORY_DIRECT = "story.direct"
+    STORY_TRANSLATE = "story.translate"
+    STORY_CAST = "story.cast"
+    STORY_IMAGE = "story.image"
+    STORY_VIDEO = "story.video"
+    STORY_VOICE = "story.voice"
+    STORY_MUSIC = "story.music"
+    STORY_CAPTIONS = "story.captions"
+
+
+AUTO = "auto"
 
 
 @dataclass(frozen=True)
 class ModelRef:
-    """One inference route: which provider serves the call and which of its models."""
+    """One inference pick: a model (blank is `auto`, the task's route on the gateway) on a
+    provider (blank is any that serves it), with fallback picks tried after it."""
 
     provider: str = ""
     model: str = ""
+    fallback: Tuple["ModelRef", ...] = ()
 
     @classmethod
     def from_mapping(cls, value: Optional[Mapping[str, Any]]) -> "ModelRef":
         value = value or {}
-        return cls(str(value.get("provider") or "").strip(), str(value.get("model") or "").strip())
+        fallback = value.get("fallback") or ()
+        return cls(
+            cls._clean(value.get("provider")),
+            cls._clean(value.get("model")),
+            tuple(cls.from_mapping(item) for item in fallback if isinstance(item, Mapping)),
+        )
+
+    @staticmethod
+    def _clean(value: Any) -> str:
+        text = str(value or "").strip()
+        return "" if text.lower() == AUTO else text
+
+    @property
+    def auto(self) -> bool:
+        return not self.model
 
     def with_overrides(self, provider: str = "", model: str = "") -> "ModelRef":
+        if not (provider.strip() or model.strip()):
+            return self
         return ModelRef(provider.strip() or self.provider, model.strip() or self.model)
 
+    def inference(self) -> Dict[str, Any]:
+        """The gateway's `inference` field for this pick."""
+        out: Dict[str, Any] = {"model": self.model or AUTO, "provider": self.provider or AUTO}
+        if self.fallback:
+            out["fallback"] = [{"model": f.model or AUTO, "provider": f.provider or AUTO}
+                               for f in self.fallback]
+        return out
+
     def __str__(self) -> str:
-        return f"{self.provider}/{self.model or 'default'}"
+        return f"{self.provider or AUTO}/{self.model or AUTO}"
 
 
 @dataclass(frozen=True)
@@ -58,7 +112,6 @@ class MeterAction(StrEnum):
     CLIP_RENDER = "clip_render"
     CLIP_CAPTIONS = "clip_captions"
     CLIP_VARIANT = "clip_variant"
-    TRANSCRIBE_MINUTE = "transcribe_minute"
     AGENT_RUN = "agent_run"
 
 

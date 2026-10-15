@@ -7,7 +7,14 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kinoforge.observ import active
-from kinoforge.schemas.common import DefinitionBundleRequest, LogEntryResponse, LoggableRequest
+from kinoforge.schemas.common import (
+    CHARGES_DESCRIPTION,
+    PICK_DESCRIPTION,
+    DefinitionBundleRequest,
+    InferenceChargeResponse,
+    LogEntryResponse,
+    LoggableRequest,
+)
 from kinoforge.segments.clips.render.media import AspectRatio, FillStyle, MasterQuality
 
 
@@ -60,9 +67,7 @@ class ImageRenderRequest(LoggableRequest):
         description="Minimal project shape {input: {image_preset, ...}} the prompt builder reads.",
     )
     preset_keys: ImagePresetKeysRequest = Field(description="Resolved preset keys to render from.")
-    pick: Dict[str, Any] = Field(
-        default_factory=dict, description="Resolved image route {provider, model}."
-    )
+    pick: Dict[str, Any] = Field(default_factory=dict, description=PICK_DESCRIPTION)
     options: ImageOptionsRequest = Field(default_factory=ImageOptionsRequest)
     reference_b64: str = Field(default="", description="Optional reference image, base64 encoded.")
     prompt_limit: int = Field(
@@ -86,6 +91,17 @@ REWRITES_DESCRIPTION = (
 )
 
 
+class ServedResponse(BaseModel):
+    provider: str = Field(default="", description="Provider that made the media.")
+    model: str = Field(default="", description="Model that made the media.")
+
+
+SERVED_DESCRIPTION = (
+    "The provider and model that made the media, for the caller to bill and to keep: an auto "
+    "pick or a fallback only learns them from the answer."
+)
+
+
 class ImageRenderResponse(BaseModel):
     image_b64: str = Field(description="Generated image, base64 encoded.")
     observed_limit: int = Field(
@@ -94,7 +110,13 @@ class ImageRenderResponse(BaseModel):
     enhance: List[PromptRewriteUsage] = Field(
         default_factory=list, description=REWRITES_DESCRIPTION
     )
+    served: ServedResponse = Field(
+        default_factory=ServedResponse, description=SERVED_DESCRIPTION
+    )
     logs: List[LogEntryResponse] = Field(default_factory=list)
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )
 
 
 class VideoOptionsRequest(BaseModel):
@@ -132,9 +154,7 @@ class VideoRenderRequest(LoggableRequest):
         description="Minimal project shape {input: {image_preset, ...}} the prompt builder reads.",
     )
     preset_keys: ImagePresetKeysRequest = Field(description="Resolved preset keys to render from.")
-    pick: Dict[str, Any] = Field(
-        default_factory=dict, description="Resolved video route {provider, model}."
-    )
+    pick: Dict[str, Any] = Field(default_factory=dict, description=PICK_DESCRIPTION)
     options: VideoOptionsRequest = Field(description="Clip duration and framing.")
     image_b64: str = Field(default="", description="Optional seed still image, base64 encoded.")
     prompt_limit: int = Field(
@@ -154,7 +174,13 @@ class VideoRenderResponse(BaseModel):
     enhance: List[PromptRewriteUsage] = Field(
         default_factory=list, description=REWRITES_DESCRIPTION
     )
+    served: ServedResponse = Field(
+        default_factory=ServedResponse, description=SERVED_DESCRIPTION
+    )
     logs: List[LogEntryResponse] = Field(default_factory=list)
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )
 
 
 class ClipJobRequest(VideoRenderRequest):
@@ -193,6 +219,9 @@ class ClipJobResponse(BaseModel):
     enhance: List[PromptRewriteUsage] = Field(
         default_factory=list, description=REWRITES_DESCRIPTION
     )
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )
 
 
 class MusicRenderRequest(LoggableRequest):
@@ -207,9 +236,7 @@ class MusicRenderRequest(LoggableRequest):
         description="Story record: style, logline and scenes (sizes the bed).",
     )
     music_key: str = Field(description="Resolved music preset key to render the mood from.")
-    pick: Dict[str, Any] = Field(
-        default_factory=dict, description="Resolved music route {provider, model}."
-    )
+    pick: Dict[str, Any] = Field(default_factory=dict, description=PICK_DESCRIPTION)
     definitions: DefinitionBundleRequest = Field(
         description="Frozen music preset resolved by the caller.",
     )
@@ -217,7 +244,13 @@ class MusicRenderRequest(LoggableRequest):
 
 class MusicRenderResponse(BaseModel):
     music_b64: str = Field(description="Generated music track, base64 encoded.")
+    served: ServedResponse = Field(
+        default_factory=ServedResponse, description=SERVED_DESCRIPTION
+    )
     logs: List[LogEntryResponse] = Field(default_factory=list)
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )
 
 
 class VoiceOptionsRequest(BaseModel):
@@ -235,15 +268,19 @@ class VoiceRenderRequest(LoggableRequest):
     project_id: str = ""
     owner: str = ""
     text: str = Field(min_length=1, description="Narration text to synthesize.")
-    pick: Dict[str, Any] = Field(
-        default_factory=dict, description="Resolved TTS route {provider, model}."
-    )
+    pick: Dict[str, Any] = Field(default_factory=dict, description=PICK_DESCRIPTION)
     options: VoiceOptionsRequest = Field(default_factory=VoiceOptionsRequest)
 
 
 class VoiceRenderResponse(BaseModel):
     audio_b64: str = Field(description="Generated speech audio, base64 encoded.")
+    served: ServedResponse = Field(
+        default_factory=ServedResponse, description=SERVED_DESCRIPTION
+    )
     logs: List[LogEntryResponse] = Field(default_factory=list)
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )
 
 
 class StoryPromptPreviewRequest(LoggableRequest):

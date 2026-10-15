@@ -1,12 +1,15 @@
 """Story segment schemas: write context/request/response and the edit-operation request."""
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, List
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from kinoforge.schemas.common import (
+    CHARGES_DESCRIPTION,
+    PICK_DESCRIPTION,
     DefinitionBundleRequest,
+    InferenceChargeResponse,
     LogEntryResponse,
     LoggableRequest,
     MeterEventResponse,
@@ -46,7 +49,7 @@ class StoryWriteRequest(LoggableRequest):
     )
     pick: dict[str, Any] = Field(
         default_factory=dict,
-        description="Resolved default text route {provider, model} for stages without overrides.",
+        description=f"{PICK_DESCRIPTION} Stages without their own model use it.",
     )
     config: dict[str, Any] = Field(
         default_factory=dict,
@@ -63,6 +66,9 @@ class StoryWriteResponse(BaseModel):
     )
     meter_events: list[MeterEventResponse] = Field(default_factory=list)
     logs: list[LogEntryResponse] = Field(default_factory=list)
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )
 
 
 class StoryOperation(StrEnum):
@@ -86,7 +92,7 @@ class StoryOperationRequest(LoggableRequest):
         description="Operation input: project/story, scene index, language, or instructions.",
     )
     agent: dict[str, Any] = Field(default_factory=dict)
-    pick: dict[str, Any] = Field(default_factory=dict)
+    pick: dict[str, Any] = Field(default_factory=dict, description=PICK_DESCRIPTION)
     config: dict[str, Any] = Field(
         default_factory=dict, description="Resolved rewrite and translation token budgets."
     )
@@ -97,3 +103,6 @@ class StoryOperationResponse(BaseModel):
     result: dict[str, Any]
     meter_events: list[MeterEventResponse] = Field(default_factory=list)
     logs: list[LogEntryResponse] = Field(default_factory=list)
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )

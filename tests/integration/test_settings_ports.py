@@ -6,10 +6,9 @@ import pytest
 
 pytest.importorskip("httpx")
 
-from kinoforge.contract import ModelRef  # noqa: E402
-from kinoforge.service.settings import ServiceSettings  # noqa: E402
+from kinoforge.contract import AITask, ModelRef  # noqa: E402
 from kinoforge.service.runtimes.text_ports import InfrelayTextPorts  # noqa: E402
-
+from kinoforge.service.settings import ServiceSettings  # noqa: E402
 
 # --- ServiceSettings ------------------------------------------------------
 
@@ -46,8 +45,8 @@ class _FakeInfrelay:
     def __init__(self):
         self.calls = []
 
-    def text(self, ref, system, user, *, temperature, max_tokens):
-        self.calls.append((ref.provider, ref.model))
+    def text(self, task, ref, system, user, *, temperature, max_tokens):
+        self.calls.append((task, ref.provider, ref.model))
         return '{"episodes": [1, 2]}', {"usage": 3}
 
 
@@ -64,28 +63,29 @@ def _ports(*, budgets=None, contract_key=None, language_key=None):
 
 def test_complete_calls_the_given_route():
     p = _ports()
-    text, usage = p.complete("x", "sys", "usr", route=ModelRef("op", "m"),
+    text, usage = p.complete(AITask.STORY_WRITE, "sys", "usr", route=ModelRef("op", "m"),
                              temperature=0.3, max_tokens=100)
     assert text == '{"episodes": [1, 2]}'
     assert usage == {"usage": 3}
-    assert p._infrelay.calls == [("op", "m")]
+    assert p._infrelay.calls == [("story.write", "op", "m")]
 
 
 def test_stage_model_override_keeps_the_provider():
     p = _ports()
     route = ModelRef("op", "m").with_overrides(model="m2")
-    p.complete("x", "s", "u", route=route, temperature=0.1, max_tokens=10)
-    assert p._infrelay.calls == [("op", "m2")]
+    p.complete(AITask.STORY_WRITE, "s", "u", route=route, temperature=0.1, max_tokens=10)
+    assert p._infrelay.calls == [("story.write", "op", "m2")]
 
 
-def test_complete_without_provider_raises():
-    with pytest.raises(RuntimeError, match="story text route is missing a provider"):
-        _ports().complete("x", "s", "u", route=ModelRef(), temperature=0.1, max_tokens=10)
+def test_an_auto_route_is_left_to_the_gateway():
+    p = _ports()
+    p.complete(AITask.STORY_IDEAS, "s", "u", route=ModelRef(), temperature=0.1, max_tokens=10)
+    assert p._infrelay.calls == [("story.ideas", "", "")]
 
 
 def test_complete_json_parses_result():
     assert _ports().complete_json(
-        "x", "s", "u", route=ModelRef("op", "m"), temperature=0.2, max_tokens=50
+        AITask.STORY_WRITE, "s", "u", route=ModelRef("op", "m"), temperature=0.2, max_tokens=50
     ) == {"episodes": [1, 2]}
 
 

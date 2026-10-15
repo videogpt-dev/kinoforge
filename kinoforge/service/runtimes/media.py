@@ -10,9 +10,10 @@ from functools import partial
 from string import Template
 from typing import Any
 
-from kinoforge.contract import ImageSpec, ModelRef, VideoSpec
+from kinoforge.contract import AITask, ImageSpec, ModelRef, VideoSpec
 from kinoforge.definitions import DefinitionBundle
 from kinoforge.definitions.models import DefinitionKind
+from kinoforge.inference.charges import InferenceCharges
 from kinoforge.observ import KinoLogger, build_logger, logged
 from kinoforge.schemas import (
     ClipJobRequest,
@@ -96,13 +97,15 @@ class MediaRuntime:
             key=maker.preset_key(rec, scene) or None,
         )
 
+    @InferenceCharges.reported
     @logged
     def render_image(self, request: ImageRenderRequest) -> dict[str, object]:
         logger = self._logger(request, "image")
         logger.info(f"image render start ({request.mode})", mode=request.mode)
         ceiling = PromptCeiling(request.prompt_limit)
         infrelay = self._settings.infrelay(request.owner)
-        painter = self._painter(self._presets(request), infrelay.image, ceiling)
+        task = AITask.STORY_CAST if request.mode == "character" else AITask.STORY_IMAGE
+        painter = self._painter(self._presets(request), partial(infrelay.image, task), ceiling)
         opts = request.options
         spec = ImageSpec(
             aspect_ratio=opts.aspect_ratio, seed=opts.seed, mature=opts.mature,
@@ -125,16 +128,20 @@ class MediaRuntime:
             "image_b64": base64.b64encode(data).decode(),
             "observed_limit": ceiling.learned,
             "enhance": infrelay.rewrites,
+            "served": infrelay.served,
             "logs": logger.entries,
         }
 
+    @InferenceCharges.reported
     @logged
     def render_clip(self, request: VideoRenderRequest) -> dict[str, object]:
         logger = self._logger(request, "video")
         logger.info("video render start")
         ceiling = PromptCeiling(request.prompt_limit)
         infrelay = self._settings.infrelay(request.owner)
-        maker = ClipMaker(generate_video=infrelay.video, ceiling=ceiling)
+        maker = ClipMaker(
+            generate_video=partial(infrelay.video, AITask.STORY_VIDEO), ceiling=ceiling
+        )
         story, scene, rec = dict(request.story), dict(request.scene), dict(request.rec)
         opts = request.options
         spec = VideoSpec(
@@ -149,6 +156,7 @@ class MediaRuntime:
             "video_b64": base64.b64encode(data).decode(),
             "observed_limit": ceiling.learned,
             "enhance": infrelay.rewrites,
+            "served": infrelay.served,
             "logs": logger.entries,
         }
 
@@ -159,7 +167,7 @@ class MediaRuntime:
         the provider declares comes back on the job, for the caller to resubmit with."""
         logger = self._logger(request, "video")
         infrelay = self._settings.infrelay(request.owner)
-        maker = ClipMaker(generate_video=infrelay.video, ceiling=PromptCeiling())
+        maker = ClipMaker(generate_video=MediaUtils.no_media, ceiling=PromptCeiling())
         story, scene, rec = dict(request.story), dict(request.scene), dict(request.rec)
         opts = request.options
         spec = VideoSpec(
@@ -170,11 +178,13 @@ class MediaRuntime:
         motion = self._motion(self._presets(request), maker, scene, story, rec)
         prompt, spec = maker.clip_call(scene, story, motion, spec, request.prompt_limit)
         job_id = infrelay.submit_video(
-            ModelRef.from_mapping(request.pick), prompt, spec, request.callback_url
+            AITask.STORY_VIDEO, ModelRef.from_mapping(request.pick), prompt, spec,
+            request.callback_url,
         )
         logger.info("video job queued", job=job_id)
         return {"job_id": job_id, "logs": logger.entries}
 
+    @InferenceCharges.reported
     def clip_job(self, owner: str, job_id: str) -> dict[str, object]:
         """A queued clip now, with its bytes once it is done."""
         infrelay = self._settings.infrelay(owner)
@@ -196,29 +206,41 @@ class MediaRuntime:
         job = self._settings.infrelay(owner).cancel_job(job_id)
         return {"job_id": job_id, "status": job.get("status"), "error": job.get("error") or ""}
 
+    @InferenceCharges.reported
     @logged
     def render_music(self, request: MusicRenderRequest) -> dict[str, object]:
         logger = self._logger(request, "music")
         logger.info("music render start")
         body = self._bundle(request).require(DefinitionKind.PRESET, request.music_key).body
+        infrelay = self._settings.infrelay(request.owner)
         composer = MusicComposer(
-            generate_music=self._settings.infrelay(request.owner).music,
+            generate_music=partial(infrelay.music, AITask.STORY_MUSIC),
             music_preset=partial(MediaUtils.music_prompt, body),
         )
         data = composer.compose(dict(request.story), ModelRef.from_mapping(request.pick))
         logger.success("music render done", bytes=len(data))
-        return {"music_b64": base64.b64encode(data).decode(), "logs": logger.entries}
+        return {
+            "music_b64": base64.b64encode(data).decode(),
+            "served": infrelay.served,
+            "logs": logger.entries,
+        }
 
+    @InferenceCharges.reported
     @logged
     def render_voice(self, request: VoiceRenderRequest) -> dict[str, object]:
         logger = self._logger(request, "voice")
         logger.info("voice render start")
-        data = self._settings.infrelay(request.owner).speech(
-            ModelRef.from_mapping(request.pick), request.text,
+        infrelay = self._settings.infrelay(request.owner)
+        data = infrelay.speech(
+            AITask.STORY_VOICE, ModelRef.from_mapping(request.pick), request.text,
             voice=request.options.voice, language=request.options.language,
         )
         logger.success("voice render done", bytes=len(data))
-        return {"audio_b64": base64.b64encode(data).decode(), "logs": logger.entries}
+        return {
+            "audio_b64": base64.b64encode(data).decode(),
+            "served": infrelay.served,
+            "logs": logger.entries,
+        }
 
     def preview_prompts(self, request: StoryPromptPreviewRequest) -> dict[str, str]:
         presets = self._presets(request)

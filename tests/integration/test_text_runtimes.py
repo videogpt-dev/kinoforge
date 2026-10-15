@@ -62,7 +62,7 @@ def _write_request(stages=None) -> StoryWriteRequest:
 def test_story_write_returns_plan_and_meter(monkeypatch):
     seen = {}
 
-    def text(self, ref, system, user, *, temperature, max_tokens):
+    def text(self, task, ref, system, user, *, temperature, max_tokens):
         seen.update(ref=str(ref), system=system, user=user)
         return STORY_JSON, dict(USAGE)
 
@@ -109,7 +109,7 @@ def test_story_write_honors_cancellation_between_stages(monkeypatch):
 def test_story_rewrites_scene_from_frozen_definition(monkeypatch):
     seen = {}
 
-    def text(self, ref, system, user, *, temperature, max_tokens):
+    def text(self, task, ref, system, user, *, temperature, max_tokens):
         seen.update(system=system, user=user, max_tokens=max_tokens)
         return json.dumps({"prompt": "New lighthouse shot", "narration": "A final warning."}), USAGE
 
@@ -176,7 +176,7 @@ def test_series_plan_builds_prompt_and_returns_episodes(monkeypatch):
     seen = {}
     episodes = [{"title": "Fog", "description": "A body in the surf."}]
 
-    def text(self, ref, system, user, *, temperature, max_tokens):
+    def text(self, task, ref, system, user, *, temperature, max_tokens):
         seen.update(ref=ref, user=user, max_tokens=max_tokens)
         return json.dumps({"episodes": episodes}), {}
 

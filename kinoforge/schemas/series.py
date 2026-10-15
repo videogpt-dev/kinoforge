@@ -5,9 +5,12 @@ from typing import Any, Dict, List
 from pydantic import BaseModel, ConfigDict, Field
 
 from kinoforge.schemas.common import (
+    CHARGES_DESCRIPTION,
+    PICK_DESCRIPTION,
     DefinitionBundleRequest,
-    LoggableRequest,
+    InferenceChargeResponse,
     LogEntryResponse,
+    LoggableRequest,
     MeterEventResponse,
 )
 
@@ -38,9 +41,7 @@ class SeriesPlanRequest(LoggableRequest):
     owner: str = Field(default="", description="Opaque tenant or owner identifier.")
     series: SeriesContextRequest = Field(description="Premise and cast the showrunner plans from.")
     count: int = Field(default=6, ge=1, le=12, description="How many episode ideas to propose.")
-    pick: Dict[str, Any] = Field(
-        default_factory=dict, description="Resolved default text route {provider, model}."
-    )
+    pick: Dict[str, Any] = Field(default_factory=dict, description=PICK_DESCRIPTION)
     config: Dict[str, Any] = Field(
         default_factory=dict,
         description="Resolved output-token budgets and other runtime config.",
@@ -56,3 +57,6 @@ class SeriesPlanResponse(BaseModel):
     )
     meter_events: List[MeterEventResponse] = Field(default_factory=list)
     logs: List[LogEntryResponse] = Field(default_factory=list)
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )

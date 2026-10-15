@@ -5,16 +5,18 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kinoforge.observ import active
-from kinoforge.segments.clips.render.media import AspectRatio, ClipQuality
 from kinoforge.schemas.common import (
+    CHARGES_DESCRIPTION,
     DefinitionBundleRequest,
     ExecutionResultResponse,
     ExecutionState,
     ExecutionStateResponse,
-    LoggableRequest,
+    InferenceChargeResponse,
     LogEntryResponse,
+    LoggableRequest,
     MeterEventResponse,
 )
+from kinoforge.segments.clips.render.media import AspectRatio, ClipQuality
 
 
 class ClipsOptionsRequest(BaseModel):
@@ -90,3 +92,6 @@ class ClipsExecutionResponse(BaseModel):
     state: ExecutionStateResponse
     meter_events: List[MeterEventResponse] = Field(default_factory=list)
     logs: List[LogEntryResponse] = Field(default_factory=list)
+    inference: List[InferenceChargeResponse] = Field(
+        default_factory=list, description=CHARGES_DESCRIPTION
+    )

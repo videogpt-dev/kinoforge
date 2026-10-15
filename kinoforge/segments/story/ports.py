@@ -3,19 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from kinoforge.contract import Meter, ModelRef, no_meter
+from kinoforge.contract import AITask, Meter, ModelRef, no_meter
 
 
 class Complete(Protocol):
     def __call__(
-        self, purpose: str, system: str, user: str, *,
+        self, task: AITask, system: str, user: str, *,
         route: ModelRef, temperature: float, max_tokens: int,
     ) -> tuple[str, dict]: ...
 
 
 class CompleteJson(Protocol):
     def __call__(
-        self, purpose: str, system: str, user: str, *,
+        self, task: AITask, system: str, user: str, *,
         route: ModelRef, temperature: float, max_tokens: int,
     ) -> dict: ...
 

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from kinoforge.api.paths import require_available, require_clips, shared_path
 from kinoforge.contract import JobKind
+from kinoforge.inference.charges import InferenceCharges
 from kinoforge.schemas import (
     AlignmentResponse,
     AlignRequest,
@@ -133,8 +134,10 @@ def align_transcription(code_name: JobKind, request: AlignRequest) -> dict:
     require_clips(code_name)
     source = shared_path(request.path, must_exist=True)
     engine = GatewayTranscriber(ServiceSettings.from_env(), request.owner, request.transcription)
-    segments = engine.transcribe_words(source, request.language or None)
+    with InferenceCharges.collect() as charges:
+        segments = engine.transcribe_words(source, request.language or None)
     return {
         "segments": segments,
         "aligned": WordAligner.align(request.text, segments, request.duration),
+        "inference": charges,
     }

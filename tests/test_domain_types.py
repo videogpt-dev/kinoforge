@@ -25,7 +25,19 @@ def test_model_ref_overrides_are_independent():
 
 def test_model_ref_str():
     assert str(ModelRef("op", "m")) == "op/m"
-    assert str(ModelRef("op")) == "op/default"
+    assert str(ModelRef("op")) == "op/auto"
+    assert str(ModelRef()) == "auto/auto"
+
+
+def test_a_pick_reads_auto_as_blank_and_keeps_its_fallbacks():
+    ref = ModelRef.from_mapping(
+        {"provider": "AUTO", "model": " auto ", "fallback": [{"provider": "op", "model": "m"}]}
+    )
+    assert (ref.provider, ref.model, ref.auto) == ("", "", True)
+    assert ref.fallback == (ModelRef("op", "m"),)
+    assert ref.inference() == {
+        "model": "auto", "provider": "auto", "fallback": [{"model": "m", "provider": "op"}],
+    }
 
 
 # --- PromptCeiling --------------------------------------------------------

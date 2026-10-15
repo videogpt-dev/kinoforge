@@ -40,7 +40,7 @@ def _image_bundle() -> dict:
 
 
 def _failing_once(calls: dict, message: str, data: bytes):
-    def generate(self, ref, prompt, spec):
+    def generate(self, task, ref, prompt, spec):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError(message)
@@ -65,7 +65,7 @@ def _image_request(mode: str, **over) -> ImageRenderRequest:
 def test_render_image_scene_builds_prompt_and_negative(monkeypatch):
     seen = {}
 
-    def image(self, ref, prompt, spec):
+    def image(self, task, ref, prompt, spec):
         seen.update(ref=ref, prompt=prompt, spec=spec)
         return PNG
 
@@ -83,7 +83,7 @@ def test_render_image_scene_builds_prompt_and_negative(monkeypatch):
 def test_render_image_character_uses_portrait_without_negative(monkeypatch):
     seen = {}
 
-    def image(self, ref, prompt, spec):
+    def image(self, task, ref, prompt, spec):
         seen.update(prompt=prompt, negative=spec.negative)
         return PNG
 
@@ -141,7 +141,7 @@ def _video_request(**over) -> VideoRenderRequest:
 def test_render_clip_builds_prompt_with_shot_and_motion(monkeypatch):
     seen = {}
 
-    def video(self, ref, prompt, spec):
+    def video(self, task, ref, prompt, spec):
         seen.update(prompt=prompt, spec=spec)
         return MP4
 
@@ -168,7 +168,7 @@ def test_render_clip_learns_prompt_ceiling_on_retry(monkeypatch):
 def test_video_prompt_compacts_to_the_ceiling_and_keeps_the_shot(monkeypatch):
     prompts = []
 
-    def video(self, ref, prompt, spec):
+    def video(self, task, ref, prompt, spec):
         prompts.append(prompt)
         return MP4
 
@@ -190,7 +190,7 @@ def test_video_prompt_compacts_to_the_ceiling_and_keeps_the_shot(monkeypatch):
 def test_a_queued_clip_is_submitted_with_its_prompt_and_read_back_when_done(monkeypatch):
     seen = {}
 
-    def submit_video(self, ref, prompt, spec, callback_url):
+    def submit_video(self, task, ref, prompt, spec, callback_url):
         seen.update(ref=ref, prompt=prompt, spec=spec, callback=callback_url)
         return "job-9"
 
@@ -241,7 +241,7 @@ def test_a_failed_clip_job_reports_the_prompt_ceiling_the_provider_declared(monk
 def test_render_music_builds_mood_prompt_and_sizes_bed(monkeypatch):
     seen = {}
 
-    def music(self, ref, prompt, *, seconds):
+    def music(self, task, ref, prompt, *, seconds):
         seen.update(ref=ref, prompt=prompt, seconds=seconds)
         return MP3
 
@@ -269,7 +269,7 @@ def test_render_music_builds_mood_prompt_and_sizes_bed(monkeypatch):
 def test_render_voice_forwards_resolved_route(monkeypatch):
     seen = {}
 
-    def speech(self, ref, text, *, voice, language):
+    def speech(self, task, ref, text, *, voice, language):
         seen.update(ref=str(ref), text=text, voice=voice, language=language)
         return MP3
 
@@ -309,10 +309,77 @@ def test_render_reports_each_prompt_rewrite_infrelay_ran(monkeypatch):
     assert cached["enhance"] == []
 
 
+def _answering(monkeypatch, sent: list, provider: str, model: str) -> None:
+    import httpx
+
+    from kinoforge.inference import infrelay as infrelay_module
+
+    def post(url, headers, json, timeout):
+        sent.append((url, json))
+        output = {"type": "b64", "value": base64.b64encode(PNG).decode()}
+        return httpx.Response(
+            200, json={"provider": provider, "model": model, "output": output, "usage": {}}
+        )
+
+    monkeypatch.setattr(infrelay_module.InfrelayClient, "_http", SimpleNamespace(post=post))
+
+
+def test_an_auto_pick_lets_infrelay_route_it_and_reports_the_step_that_answered(monkeypatch):
+    sent: list = []
+    _answering(monkeypatch, sent, "pollinations", "z-image-turbo")
+
+    out = MediaRuntime(SETTINGS).render_image(_image_request("scene", pick={}))
+
+    [(url, body)] = sent
+    assert url == "http://infrelay/v1/inference/story.image"
+    assert body["inference"] == {"model": "auto", "provider": "auto"}
+    assert "model" not in body["input"]  # each route step names its own
+    assert out["served"] == {"provider": "pollinations", "model": "z-image-turbo"}
+
+
+def test_a_character_sheet_is_the_cast_task(monkeypatch):
+    sent: list = []
+    _answering(monkeypatch, sent, "fal", "flux")
+    story = {"style": "noir", "characters": [{"name": "Ana", "description": "a keeper"}]}
+
+    MediaRuntime(SETTINGS).render_image(_image_request("character", story=story))
+
+    assert sent[0][0] == "http://infrelay/v1/inference/story.cast"
+
+
+def test_a_pinned_pick_runs_only_that_model(monkeypatch):
+    sent: list = []
+    _answering(monkeypatch, sent, "fal", "flux")
+
+    out = MediaRuntime(SETTINGS).render_image(_image_request("scene"))
+
+    [(url, body)] = sent
+    assert url == "http://infrelay/v1/inference/story.image"
+    assert body["inference"] == {"model": "flux", "provider": "fal"}
+    assert out["served"] == {"provider": "fal", "model": "flux"}
+
+
+def test_an_auto_music_pick_reports_what_served_it(monkeypatch):
+    sent: list = []
+    _answering(monkeypatch, sent, "replicate", "riffusion")
+    request = MusicRenderRequest(
+        job_id="job-1", project_id="proj-1", owner="tenant-1",
+        story={"style": "noir", "scenes": [{"prompt": "a", "narration": "one"}]},
+        music_key="prompts.presets.music.default",
+        pick={"model": "auto"},
+        definitions=bundle(preset("prompts.presets.music.default", "score, mood: $mood")),
+    )
+
+    out = MediaRuntime(SETTINGS).render_music(request)
+
+    assert sent[0][0] == "http://infrelay/v1/inference/story.music"
+    assert out["served"] == {"provider": "replicate", "model": "riffusion"}
+
+
 def test_a_scene_with_a_reference_is_told_what_the_reference_is_for(monkeypatch):
     seen = {}
 
-    def image(self, ref, prompt, spec):
+    def image(self, task, ref, prompt, spec):
         seen["prompt"] = prompt
         return PNG
 
