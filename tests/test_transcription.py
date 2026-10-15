@@ -38,7 +38,7 @@ def test_transcribes_once_then_serves_cache(tmp_path):
     assert transcriber.transcribe_video(audio) == _SEGMENTS
     assert len(gateway.calls) == 1
     ref, kwargs = gateway.calls[0]
-    assert ref == ModelRef("whisper", "base")
+    assert ref == ModelRef(fallback=(ModelRef("whisper", "base"),))
     assert kwargs["params"]["beam_size"] == 5 and kwargs["params"]["device"] == "cpu"
 
 

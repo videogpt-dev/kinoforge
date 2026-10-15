@@ -67,7 +67,7 @@ class Transcriber:
         if cached is not None:
             active().info(f"  Using cached transcript: {cache_path.name} ({len(cached)} segments)")
             return cached
-        segments = self._transcribe(video_path, model, language)
+        segments = self._transcribe(video_path, self._ref(model_size), language)
         if segments and cache.save(cache_path, segments):
             active().info(f"  Saved transcript: {cache_path}")
         return segments
@@ -77,8 +77,7 @@ class Transcriber:
         empty when the gateway cannot do it."""
         try:
             segments, _meta = self._transcribe_bytes(
-                AITask.STORY_CAPTIONS, audio_path.read_bytes(),
-                ModelRef("whisper", self._settings["model"]),
+                AITask.STORY_CAPTIONS, audio_path.read_bytes(), self._ref(),
                 language=language or self._settings.get("language") or "",
                 word_timestamps=True, params=self._tuning(),
             )
@@ -87,13 +86,18 @@ class Transcriber:
             active().warning(f"  Word-timing transcription failed: {exc}")
             return []
 
-    def _transcribe(self, video_path: Path, model: str, language: Optional[str]) -> List[Dict]:
-        active().info(f"  Transcribing with faster-whisper (gateway, {model})...")
+    def _ref(self, model_size: Optional[str] = None) -> ModelRef:
+        """The task's route, whisper after it; a job naming its model size pins whisper."""
+        if model_size:
+            return ModelRef("whisper", model_size)
+        return ModelRef(fallback=(ModelRef("whisper", str(self._settings["model"])),))
+
+    def _transcribe(self, video_path: Path, ref: ModelRef, language: Optional[str]) -> List[Dict]:
+        active().info(f"  Transcribing through the gateway ({ref})...")
         audio_path = self.extract_audio(video_path)
         try:
             segments, meta = self._transcribe_bytes(
-                AITask.VIRAL_CLIP_TRANSCRIBE, audio_path.read_bytes(),
-                ModelRef("whisper", model or "turbo"),
+                AITask.VIRAL_CLIP_TRANSCRIBE, audio_path.read_bytes(), ref,
                 language=language or "", params=self._tuning(),
             )
         finally:
