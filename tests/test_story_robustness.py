@@ -69,7 +69,7 @@ def test_json_stage_defaults_cooler_and_retry_never_runs_hotter():
 def test_a_failing_stage_still_reports_the_tokens_already_spent():
     fake = _Fake(["notes", RuntimeError("provider down")])
     result = _run([{"role": "research"}, {"format": "story_json"}], fake)
-    assert result["ok"] is False and "provider down" in result["error"]
+    assert result["ok"] is False and result["detail"] == "provider down"
     assert result["usage"]["input_tokens"] == 2 and result["usage"]["output_tokens"] == 3
 
 

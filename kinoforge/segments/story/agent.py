@@ -22,6 +22,15 @@ from kinoforge.segments.story.ports import StoryPorts
 _DASH_RE = re.compile(r"\s*[—–―]+\s*")
 
 
+class ModelFailure:
+    """A model call that failed: what failed, for the user, and its cause as `detail`, for the
+    caller to log or word."""
+
+    @staticmethod
+    def of(what: str, error: object) -> dict:
+        return {"ok": False, "error": f"{what} failed.", "detail": str(error)}
+
+
 class AudienceMode(StrEnum):
     GENERAL = "general"
     MATURE = "mature"

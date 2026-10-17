@@ -3,7 +3,7 @@ import re
 from enum import Enum
 
 from kinoforge.contract import AITask, ModelRef
-from kinoforge.segments.story.agent import clean_text, strip_dashes
+from kinoforge.segments.story.agent import ModelFailure, clean_text, strip_dashes
 from kinoforge.segments.story.formats import normalize
 from kinoforge.segments.story.languages import LANGUAGES, language_name
 from kinoforge.segments.story.ports import StoryPorts
@@ -84,7 +84,7 @@ class StoryOperations:
         try:
             data = self._ask_json(AITask.STORY_WRITE, self._agent_voice(agent), prompt, route, 0.9, max_tokens)
         except Exception as error:
-            return {"ok": False, "error": str(error)}
+            return ModelFailure.of("The scene rewrite", error)
         return {
             "ok": True,
             "scene": {
@@ -113,7 +113,7 @@ class StoryOperations:
         try:
             data = self._ask_json(AITask.STORY_WRITE, self._agent_voice(agent), prompt, route, 0.8, max_tokens)
         except Exception as error:
-            return {"ok": False, "error": str(error)}
+            return ModelFailure.of("The cast rewrite", error)
         characters = [
             {
                 "name": clean_text(character.get("name")),
@@ -152,7 +152,7 @@ class StoryOperations:
                 max_tokens,
             )
         except Exception as error:
-            return {"ok": False, "error": str(error)}
+            return ModelFailure.of("The translation", error)
         translated = self._translated_lines(data.get("narration"), scenes)
         if isinstance(translated, str):
             return {"ok": False, "error": translated}
@@ -213,7 +213,7 @@ class StoryOperations:
                 max_tokens,
             )
         except Exception as error:
-            return {"ok": False, "error": str(error)}
+            return ModelFailure.of("The shot plan", error)
         raw = data.get("shots") or []
         shots = []
         for index in range(len(scenes)):
@@ -282,7 +282,7 @@ class StoryOperations:
         try:
             cleaned = self._suggest_once(kind, system, user, route or ModelRef(), max_tokens)
         except Exception as error:
-            return {"ok": False, "error": str(error)}
+            return ModelFailure.of("The suggestion", error)
         if not self._plausible_suggestion(cleaned, kind):
             return {"ok": False, "error": "model returned unusable suggestion"}
         return {"ok": True, "text": cleaned}

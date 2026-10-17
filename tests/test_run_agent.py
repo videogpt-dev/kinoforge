@@ -71,7 +71,8 @@ def test_validation_errors():
 def test_stage_failure_names_the_stage_model():
     result, _ = _run([{"role": "writer", "model": "x1", "provider": "op"}], [RuntimeError("429")])
     assert result["ok"] is False
-    assert "Story 'writer' stage (model 'x1' on op) failed: 429" in result["error"]
+    assert result["error"] == "Story 'writer' stage (model 'x1' on op) failed."
+    assert result["detail"] == "429"
 
 
 def test_cut_off_json_blames_the_budget():

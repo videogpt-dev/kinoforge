@@ -2,6 +2,7 @@ import json
 from typing import Dict, Optional
 
 from kinoforge.contract import AITask, MeterAction, ModelRef
+from kinoforge.segments.story.agent import ModelFailure
 from kinoforge.segments.story.formats import prompt_label
 from kinoforge.segments.story.ports import StoryPorts
 
@@ -41,7 +42,7 @@ class Showrunner:
                 max_tokens=self.ports.story_budget(),
             )
         except Exception as error:
-            return {"ok": False, "error": str(error)}
+            return ModelFailure.of("The episode plan", error)
         self.ports.meter(MeterAction.AGENT_RUN, 1)
         episodes = [
             {

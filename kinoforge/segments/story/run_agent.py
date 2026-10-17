@@ -74,13 +74,12 @@ class StageUtils:
             return 0
 
     @staticmethod
-    def error(role: str, route: ModelRef, error: Exception) -> str:
+    def error(role: str, route: ModelRef) -> str:
         which = ""
         if route.model:
             where = f" on {route.provider}" if route.provider else ""
             which = f" (model '{route.model}'{where})"
-        return (f"Story '{role}' stage{which} failed: {error}. "
-                "Change this stage's model in the agent editor.")
+        return f"Story '{role}' stage{which} failed."
 
 
 class RunAgent:
@@ -178,7 +177,8 @@ class RunAgent:
                     max_tokens=self.ports.story_budget(stage.get("max_output_tokens")),
                 )
             except Exception as error:
-                return self._failure(StageUtils.error(role, route, error))
+                # What went wrong upstream is `detail`, for the caller to log or word.
+                return self._failure(StageUtils.error(role, route), detail=str(error))
             self._record_usage(usage)
             if attempt == 0:
                 self.ports.meter(MeterAction.AGENT_RUN, 1)
