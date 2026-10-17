@@ -74,6 +74,12 @@ class AssCaptions:
         )
 
     @staticmethod
+    def filter(path: Path) -> str:
+        """The ffmpeg filter that burns the ASS file at `path`."""
+        escaped = str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        return f"ass='{escaped}'"
+
+    @staticmethod
     def timestamp(seconds: float) -> str:
         """ASS timestamp H:MM:SS.cc."""
         seconds = max(0.0, seconds)

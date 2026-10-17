@@ -336,6 +336,10 @@ class BaseRenderRequest(BaseModel):
     quality: MasterQuality = Field(
         default=MasterQuality.HIGH, description="Render quality preset."
     )
+    captions: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Transcript lines ({start, end, text}, source seconds) to burn in.",
+    )
 
     @model_validator(mode="after")
     def validate_window(self) -> "BaseRenderRequest":

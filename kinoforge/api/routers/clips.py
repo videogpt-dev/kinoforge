@@ -97,6 +97,7 @@ def render_base(code_name: JobKind, request: BaseRenderRequest) -> dict:
         source, output, request.in_sec, request.out_sec, (request.src_width, request.src_height),
         crop=request.crop.model_dump() if request.crop else None,
         quality=MasterQuality(request.quality),
+        captions=tuple(request.captions),
     )
     with executions.running(request.execution_id) as control:
         ok = cut.render(is_cancelled=control.is_cancelled)

@@ -58,9 +58,7 @@ class ClipFormatter:
         if captions is not None:
             ass_path = output.with_suffix(".ass")
             if AssCaptions(*size).write(captions, ass_path):
-                escaped = (str(ass_path).replace("\\", "\\\\").replace(":", "\\:")
-                           .replace("'", "\\'"))
-                video_filter = f"{video_filter},ass='{escaped}'"
+                video_filter = f"{video_filter},{AssCaptions.filter(ass_path)}"
         return self._encode(source, output, video_filter)
 
     def _encode(self, source: Path, output: Path, video_filter: str) -> bool:
