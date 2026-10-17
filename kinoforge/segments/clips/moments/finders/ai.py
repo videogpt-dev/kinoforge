@@ -2,32 +2,37 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from kinoforge.contract import ModelRef
 from kinoforge.observ import active, logged, with_context
 from kinoforge.segments.clips.moments.finders.base import MomentFinder, MomentSpec
-from kinoforge.segments.clips.moments.finders.offline import OfflineMomentFinder
 from kinoforge.segments.clips.moments.moment import Moment
 from kinoforge.segments.clips.moments.transcript import TranscriptText
 
-Completer = Callable[..., str]
+Completer = Callable[..., Tuple[str, ModelRef]]
 Renderer = Callable[..., str]
 
 _CHARS_PER_TOKEN = 4
 _RESERVE_TOKENS = 8000
 _MIN_BUDGET_CHARS = 2000
 _REPLY_TOKENS = 8000
+_ROUNDS = 3
 _SYSTEM_KEY = "prompts.agents.moment_discovery_system"
 _USER_KEY = "prompts.agents.moment_discovery"
+
+
+class MomentFinderError(RuntimeError):
+    """The AI finder could not pick moments; the run fails with this message."""
 
 
 class AiMomentFinder(MomentFinder):
     """Sends the editor role and rules as the system prompt, then the whole timestamped
     transcript with the question last, asking for up to `count` moments.
     A transcript over the context budget is split by time into labelled parts that overlap
-    by max_len seconds, so nothing is dropped. When the model picks nothing, the offline
-    finder ranks the transcript instead."""
+    by max_len seconds, so nothing is dropped. Too few usable moments asks the route's next
+    model, keeping every answer's moments; when none are found the run fails with the reason
+    instead of guessing."""
 
     def __init__(
         self,
@@ -49,29 +54,51 @@ class AiMomentFinder(MomentFinder):
     @logged
     def find(self, transcript: List[Dict], spec: MomentSpec) -> List[Dict]:
         segs = [s for s in transcript or [] if str(s.get("text") or "").strip()]
-        moments = self._discover(segs, spec) if segs else []
-        if moments:
-            return moments
-        active().warning("  The model picked no moments; ranking the transcript offline")
-        return OfflineMomentFinder().find(transcript, spec)
+        return self._discover(segs, spec) if segs else []
 
     def _discover(self, segs: List[Dict], spec: MomentSpec) -> List[Dict]:
         parts = self._parts(segs, spec.max_len)
         active().info(f"  Reading the full transcript in {len(parts)} part(s) ({self._route})...")
-        labels = [self._label(i, len(parts), part, segs) for i, part in enumerate(parts)]
+        asks = [(part, self._label(i, len(parts), part, segs)) for i, part in enumerate(parts)]
         system = self._render(_SYSTEM_KEY)
-        picks = [p for found in self._parallel(
-            lambda job: self._ask_part(system, job[0], job[1], spec),
-            list(zip(parts, labels))
-            ) if found for p in found]
-        moments = [m for m in (self._to_moment(p, segs, spec) for p in picks) if m]
+        wanted = min(spec.count, max(1, int(Moment(segs[-1]).end // spec.max_len)))
+        route, answered = self._route, False
         kept: List[Moment] = []
-        sortedMoments = sorted((Moment(m) for m in moments), key=lambda m: m.score, reverse=True)
-        for moment in sortedMoments:
+        for _ in range(_ROUNDS):
+            moments, served = self._round(route, system, asks, segs, spec)
+            kept = self._distinct(kept + moments)
+            answered = answered or bool(served)
+            if len(kept) >= wanted or not served or served <= set(route.exclude):
+                break
+            active().warning(f"  {len(kept)} of {wanted} moments; asking the route's next model")
+            route = route.excluding(*served)
+        if not kept:
+            raise MomentFinderError(
+                "the AI moment finder picked no usable moments; retry, or pick another model"
+                if answered else "the AI moment finder did not answer; retry, or pick another model"
+            )
+        active().success(f"  Chose {len(kept)} moments")
+        return [m.data for m in kept[: spec.count]]
+
+    def _round(self, route: ModelRef, system: str, asks: List[Tuple[List[Dict], str]],
+               segs: List[Dict], spec: MomentSpec) -> Tuple[List[Moment], Set[ModelRef]]:
+        """Every part asked once on the route: the usable moments, and who answered."""
+        replies = self._parallel(
+            lambda ask: self._ask_part(route, system, ask[0], ask[1], spec), asks
+        )
+        answers = [reply for reply in replies if isinstance(reply, tuple)]
+        moments = [self._to_moment(pick, segs, spec, served)
+                   for picks, served in answers for pick in picks]
+        return [Moment(m) for m in moments if m], {served for _, served in answers}
+
+    @staticmethod
+    def _distinct(moments: List[Moment]) -> List[Moment]:
+        """Best first, dropping any that mostly overlaps a better one."""
+        kept: List[Moment] = []
+        for moment in sorted(moments, key=lambda m: m.score, reverse=True):
             if all(moment.overlap_ratio(k) <= 0.5 for k in kept):
                 kept.append(moment)
-        active().success(f"  Chose {len(kept)} moments ({len(picks)} raw picks)")
-        return [m.data for m in kept[: spec.count]]
+        return kept
 
     @staticmethod
     def _line(seg: Dict) -> str:
@@ -112,16 +139,21 @@ class AiMomentFinder(MomentFinder):
                 f"{TranscriptText.clock(Moment(segs[-1]).end)} video. "
                 f"Only pick moments inside this part.")
 
-    def _ask_part(self, system: str, part: List[Dict], label: str,
-                  spec: MomentSpec) -> List[Dict]:
+    def _ask_part(self, route: ModelRef, system: str, part: List[Dict], label: str,
+                  spec: MomentSpec) -> Tuple[List[Dict], ModelRef]:
         prompt = self._render(
             _USER_KEY,
             transcript="\n".join(self._line(s) for s in part), part=label,
             count=str(spec.count), min_len=f"{spec.min_len:.0f}", max_len=f"{spec.max_len:.0f}",
         )
-        return self._ask(system, prompt, _REPLY_TOKENS + 150 * spec.count, 0.4)
+        content, served = self._complete(route, prompt, system=system,
+                                         max_tokens=_REPLY_TOKENS + 150 * spec.count,
+                                         temperature=0.4)
+        return self._picks(content or ""), served
 
-    def _to_moment(self, pick: Dict, segs: List[Dict], spec: MomentSpec) -> Optional[Dict]:
+    @staticmethod
+    def _to_moment(pick: Dict, segs: List[Dict], spec: MomentSpec,
+                   served: ModelRef) -> Optional[Dict]:
         try:
             start, end = float(pick["start"]), float(pick["end"])
         except (KeyError, ValueError, TypeError):
@@ -138,15 +170,13 @@ class AiMomentFinder(MomentFinder):
             ai_hook=str(pick.get("hook", ""))[:120],
             title=str(pick.get("title", ""))[:120],
             language=TranscriptText.detect_language(text),
-            ai_scored=True, provider=self._route.provider, source="transcript_discovery",
+            ai_scored=True, provider=served.provider, source="transcript_discovery",
         )
 
-    def _ask(self, system: str, prompt: str, max_tokens: int,
-             temperature: float) -> List[Dict]:
+    @staticmethod
+    def _picks(content: str) -> List[Dict]:
         """The last JSON array of objects in the reply, so fences, prose and a reasoning
         model's thinking before it are tolerated; [] when there is none."""
-        content = self._complete(prompt, system=system, max_tokens=max_tokens,
-                                 temperature=temperature) or ""
         decoder = json.JSONDecoder()
         found: List[Dict] = []
         pos = content.find("[")
@@ -165,7 +195,7 @@ class AiMomentFinder(MomentFinder):
         return found
 
     def _parallel(self, fn: Callable[[Any], Any], items: List[Any]) -> List[Any]:
-        """fn over items concurrently, in order; a failed item yields None."""
+        """fn over items concurrently, in order; a failed item yields its exception."""
         tasks = [(with_context(self._attempt), item) for item in items]
         with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
             return list(pool.map(lambda task: task[0](fn, task[1]), tasks))
@@ -176,4 +206,4 @@ class AiMomentFinder(MomentFinder):
             return fn(item)
         except Exception as exc:
             active().warning(f"  AI request failed: {exc}")
-            return None
+            return exc

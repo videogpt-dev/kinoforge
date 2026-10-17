@@ -87,13 +87,22 @@ def test_a_pick_with_fallbacks_reaches_the_gateway_as_is(monkeypatch):
     }
 
 
-def test_complete_is_text_without_the_usage(monkeypatch):
+def test_complete_is_the_text_and_who_served_it(monkeypatch):
     _capture(monkeypatch, {"type": "text", "value": "hello", "meta": {"model": "m"}})
     client = InfrelayClient("http://gw")
     ref = ModelRef("op", "m")
-    assert client.complete(AITask.TEXT, ref, "p", max_tokens=5, temperature=0.1) == "hello"
+    assert client.complete(AITask.TEXT, ref, "p", max_tokens=5, temperature=0.1) == (
+        "hello", ModelRef())
     assert client.text(AITask.TEXT, ref, "", "p", temperature=0.1, max_tokens=5) == (
         "hello", {"model": "m"})
+
+
+def test_an_excluded_model_reaches_the_gateway(monkeypatch):
+    sent = _capture(monkeypatch, {"type": "text", "value": "ok"})
+    ref = ModelRef().excluding(ModelRef("op", "m"), ModelRef("op", "m"))
+    InfrelayClient("http://gw").complete(AITask.TEXT, ref, "p", max_tokens=5, temperature=0)
+    assert sent[0]["inference"] == {
+        "model": "auto", "provider": "auto", "exclude": [{"model": "m", "provider": "op"}]}
 
 
 def test_missing_url_fails_loudly():

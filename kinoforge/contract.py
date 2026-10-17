@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Dict, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
@@ -36,11 +36,13 @@ AUTO = "auto"
 @dataclass(frozen=True)
 class ModelRef:
     """One inference pick: a model (blank is `auto`, the task's route on the gateway) on a
-    provider (blank is any that serves it), with fallback picks tried after it."""
+    provider (blank is any that serves it), with fallback picks tried after it and models the
+    gateway must not try."""
 
     provider: str = ""
     model: str = ""
     fallback: Tuple["ModelRef", ...] = ()
+    exclude: Tuple["ModelRef", ...] = ()
 
     @classmethod
     def from_mapping(cls, value: Optional[Mapping[str, Any]]) -> "ModelRef":
@@ -66,12 +68,18 @@ class ModelRef:
             return self
         return ModelRef(provider.strip() or self.provider, model.strip() or self.model)
 
+    def excluding(self, *refs: "ModelRef") -> "ModelRef":
+        """This pick, never asking those models again: an auto pick moves to the route's next
+        step."""
+        return replace(self, exclude=tuple(dict.fromkeys(self.exclude + refs)))
+
     def inference(self) -> Dict[str, Any]:
         """The gateway's `inference` field for this pick."""
         out: Dict[str, Any] = {"model": self.model or AUTO, "provider": self.provider or AUTO}
-        if self.fallback:
-            out["fallback"] = [{"model": f.model or AUTO, "provider": f.provider or AUTO}
-                               for f in self.fallback]
+        for name, refs in (("fallback", self.fallback), ("exclude", self.exclude)):
+            if refs:
+                out[name] = [{"model": r.model or AUTO, "provider": r.provider or AUTO}
+                             for r in refs]
         return out
 
     def __str__(self) -> str:

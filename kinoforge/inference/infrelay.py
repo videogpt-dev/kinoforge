@@ -149,18 +149,24 @@ class InfrelayClient:
     ) -> Tuple[str, Dict]:
         """One chat completion: (text, usage). Usage carries model, token counts and
         finish_reason so a stage runner can detect a cut-off answer."""
-        payload = {"system": system, "user": user,
-                   "temperature": temperature, "max_tokens": max_tokens}
-        output = self._infer(task, ref, payload, timeout=300).get("output") or {}
-        if output.get("type") != "text":
-            raise InfrelayError("infrelay text returned unsupported output")
+        output = self._chat(task, ref, system, user, temperature, max_tokens)["output"]
         return str(output.get("value") or ""), dict(output.get("meta") or {})
 
     def complete(self, task: AITask, ref: ModelRef, prompt: str, *, max_tokens: int,
-                 temperature: float, system: str = "") -> str:
-        return self.text(
-            task, ref, system, prompt, temperature=temperature, max_tokens=max_tokens
-        )[0]
+                 temperature: float, system: str = "") -> Tuple[str, ModelRef]:
+        """One chat completion: the text, and the provider and model that served it."""
+        result = self._chat(task, ref, system, prompt, temperature, max_tokens)
+        served = ModelRef(str(result.get("provider") or ""), str(result.get("model") or ""))
+        return str(result["output"].get("value") or ""), served
+
+    def _chat(self, task: AITask, ref: ModelRef, system: str, user: str, temperature: float,
+              max_tokens: int) -> Dict[str, Any]:
+        payload = {"system": system, "user": user,
+                   "temperature": temperature, "max_tokens": max_tokens}
+        result = self._infer(task, ref, payload, timeout=300)
+        if (result.get("output") or {}).get("type") != "text":
+            raise InfrelayError("infrelay text returned unsupported output")
+        return result
 
     def image(self, task: AITask, ref: ModelRef, prompt: str, spec: ImageSpec) -> bytes:
         payload: Dict[str, Any] = {
