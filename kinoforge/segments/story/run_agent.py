@@ -137,8 +137,9 @@ class RunAgent:
         if instructions:
             parts.append(instructions)
         if is_json:
-            parts.append(self.ctx["language_rule"])
             parts.append(self.ports.contract(self.ctx["scene_count"]))
+        # Every pass, read last: a draft in another language is copied by the final pass.
+        parts.append(self.ctx.get("language_rule", ""))
         return "\n\n".join(part for part in parts if part)
 
     def _record_usage(self, usage: dict) -> None:
